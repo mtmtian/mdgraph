@@ -41,14 +41,17 @@ scripts/check-forbidden-api.mjs
 
 ## 3. 格式规则（解析器规格，M1 必须逐条实现并测试）
 
+> 2026-10-04 修订：根据 `docs/review-parser-codex-r1.md` 的 18 项发现，6 项改代码（H01、M06、L02、L06、L07、L08），12 项按下文标注 **[修订]** 的规则调整规格。
+
 ### 3.1 文件级
 - 保留 BOM（`﻿` 开头）、EOL（整文件统一按首个换行判断 `\n` / `\r\n`）、是否以 EOL 结尾。
-- `indentUnit`：第一条有缩进的 bullet 行的前导空白若含 Tab 则为 `\t`，否则为该空白本身（2 或 4 空格）；无缩进 bullet 时默认 `'  '`。
-- `continuationIndent`：第一条 bullet 延续行相对于其 bullet 行缩进的多出部分；没有则默认 `'  '`。
+- `indentUnit`：第一条有缩进的 bullet 行的前导空白若含 Tab 则为 `\t`，否则为该空白本身（2 或 4 空格）；无缩进 bullet 时默认 `'  '`。**[修订 M03]** 缩进与延续前缀只识别空格和 Tab；全角空格等其他 Unicode 空白属于内容。
+- `continuationIndent`：第一条**非空白**的 bullet 延续行相对于其 bullet 行缩进的多出部分 **[修订 M02]**；没有则默认 `'  '`。
 - 深度 = 前导空白长度 ÷ indentUnit 长度（Tab 文件按 Tab 个数）。不整除时向下取整，原文仍靠 `rawLines` 保留。
 
 ### 3.2 行分类（顺序判定，带 fence 状态）
-1. 若处于 ``` 围栏内：归当前块（bullet 延续或 raw 延续）。围栏在某块的延续行或 raw 行中以 ```` ``` ```` 开始，以同样的 ```` ``` ```` 结束；bullet 头行本身以 ``` 开头也开启围栏。
+1. 若处于 ``` 围栏内：归当前块（bullet 延续或 raw 延续）。围栏开启行 = 首个非空白内容以 ```` ``` ```` 开头**且该行其余部分不含反引号**（CommonMark info string 规则，单行 ```` ```x``` ```` 不开启）**[修订 M01]**；关闭行 = 只含不少于开启长度的反引号；未闭合则吞到块尾。bullet 头行本身满足开启条件也开启围栏。
+   行按 `\n` 切分；行内单独的 `\r` 是普通字符，分类正则中的 `.` 等价于「除 `\n` 外任意字符」**[修订 M04]**。
 2. bullet 行：`^(\s*)([-*+])(?: (.*))?$`（允许空 bullet `- `）。新建 bullet 块，深度按 3.1。
 3. 否则，当前块是 bullet 且（本行为空白行 **或** 前导空白 > 0）：作为该 bullet 的延续行。
 4. 否则：raw 行。进入/延续一个 raw run，直到下一条 bullet 行为止（raw run 内部允许空行）。
@@ -56,7 +59,7 @@ scripts/check-forbidden-api.mjs
 ### 3.3 块内容
 - bullet：`content` 第 1 行 = 头行去掉 `marker + ' '`。紧跟头行的、匹配 `^\s*([^\s:]+):: ?(.*)$` 的延续行是属性行（连续，遇到第一条非属性延续行停止）；其余延续行去掉「块缩进 + continuationIndent」前缀（不足则去掉实际前导空白）后作为 content 后续行。**头行本身是属性行**（如 `- date:: [[x]]`）时：properties 含该项，content 为空字符串。
 - raw：开头连续的属性行进入 `properties`（这是 Logseq 的页面属性写法），其余行原样 join('\n') 为 content（结尾空行保留为末尾 `\n`）。
-- `task`：content 首行以 `TODO ` / `DOING ` / `DONE ` 开头（或整行恰为该词）。
+- `task`：**仅 bullet 块** content 首行以 `TODO ` / `DOING ` / `DONE ` 开头（或整行恰为该词）；raw 块恒为 null **[修订 M05]**。
 - `id`：`id::` 属性值为 uuid 形态时 `persistentId=true`；否则 `id = 'tmp-' + 递增计数或随机`，`persistentId=false`。
 - `rawLines`：该块（不含子块）的全部原始行，不含 EOL。
 
@@ -65,25 +68,25 @@ scripts/check-forbidden-api.mjs
 - `[[Page]]` → links（不处理嵌套 `[[a [[b]]]]`，按最内层匹配）
 - `#tag`（`#` 前为行首或空白，tag 为非空白非 `#,.;:!?)]` 结尾字符串）与 `#[[multi word]]` → tags 且同时进入 links
 - `((uuid))` → refs（uuid 正则 8-4-4-4-12 十六进制）
-- 属性值中的 `[[x]]` → links；`tags::` 属性值按逗号拆分，每项去掉 `[[ ]]` 后进入 tags 与 links
-- Markdown 链接 `[text](url)`、裸 URL 不算链接。
-- links/tags/refs 按精确字符串去重，保留原大小写与出现顺序。
+- 属性值中的 `[[x]]` 与 `#[[x]]` → links（L08）；`tags::` 属性值先剔除行内代码（L02），按**不在 `[[ ]]` 内**的逗号拆分 **[修订 L04]**，每项去掉 `[[ ]]` 后再去掉一个前导 `#` **[修订 L03]**，进入 tags 与 links
+- Markdown 链接 `[text](url)` 的 `(url)` 部分和裸 URL（`https?://\S+`）先剔除，其内部的 `[[x]]` 不算链接（L07）；`[text]` 中的 `[[x]]` 仍算。剔除行内代码/URL 时用同长度非空白占位，不得制造 `#` 前的空白边界（L06）。普通 `#tag` 不能以 `[` 或 `#` 开头 **[修订 L05]**。
+- links/tags/refs 按精确字符串去重，保留原大小写；顺序 = 先 content 中出现顺序，再 properties 中出现顺序 **[修订 L01]**。
 
 ### 3.5 序列化（`serialize.ts`）—— 最高优先级
 - `rawLines !== null` 的块：逐行原样输出，再输出子块。
 - `rawLines === null` 的 bullet 块：`indent = indentUnit.repeat(depth)`；头行 `indent + marker + ' ' + contentLines[0]`（content 为空且无属性时输出 `indent + marker + ' '`… 若原文件习惯是 `-` 不带尾空格无法得知，统一带空格）；然后属性行 `indent + continuationIndent + key + ':: ' + value`（顺序按 `properties`）；然后 content 其余行加同样前缀（空行输出为空字符串，不带前缀）。
 - `rawLines === null` 的 raw 块：属性行 `key:: value` 然后 content 按行原样。
 - 拼接：行 join(eol)，`trailingNewline` 为真时末尾加 eol，`bom` 为真时前置 `﻿`。
-- **不变量**：`serialize(parse(text)) === text` 对任意输入成立（含空文件、只有空行的文件、无尾换行、CRLF、BOM、Tab、围栏、非 outliner 内容）。
+- **不变量**：`serialize(parse(text)) === text` 对任意输入成立（含空文件、只有空行的文件、无尾换行、CRLF、BOM、Tab、围栏、非 outliner 内容、上万层嵌套）。parse/serialize/walk/ops 的树遍历必须是迭代实现，不得因深度抛栈溢出（H01）。
 
 ### 3.6 编辑操作（`ops.ts`，纯函数，返回新 Document，被改块 `rawLines=null`）
-- `setBlockText(doc, id, editableText)`：按 3.3 规则把 textarea 文本重新切成 content + properties；**保留原有 `id::` 属性**（editableText 中不含它）；重新抽取 links/tags/refs/task。
+- `setBlockText(doc, id, editableText)`：按 3.3 规则把 textarea 文本重新切成 content + properties；**保留原有 `id::` 属性**（editableText 中不含它）；重新抽取 links/tags/refs/task。只把 `\r\n` 归一为 `\n`，单独 `\r` 原样保留（M06）。内容与属性都未变化时返回原 doc。
 - `insertAfter(doc, id)`：新空 bullet 块（marker 继承，depth 同级）；当目标块有子块时插为第一个子块。
 - `indent(doc, id)`：成为前一个兄弟的最后一个子块；无前兄弟则 no-op。其子树深度 +1。
 - `outdent(doc, id)`：depth 0 no-op；否则移到父块之后作为父块的兄弟，原来位于其后的兄弟成为它的子块（Logseq 行为）。
-- `mergeWithPrevious(doc, id)`：把 content 追加到前一个可见块（前兄弟的最深末端后代，或父块）的 content 末尾，删除本块；本块的子块接到被合并块下。返回光标位置 = 被合并块原 content 长度。
-- `ensureId(doc, id, uuid)`：无 `id::` 时在 properties 末尾加入并置 `rawLines=null`；已有则返回原值。
-- **子树重缩进规则**：indent/outdent 改变子孙深度时，子孙若 `rawLines !== null`，对每行做前缀位移（加一个 indentUnit，或去掉一个 indentUnit；去不掉时去掉实际前导空白中能去的部分并把该块 `rawLines=null`），不重新生成。
+- `mergeWithPrevious(doc, id)`：**仅当本块与目标块都是 bullet** **[修订 M09]**，把 content 追加到前一个可见块（前兄弟的最深末端后代，或父块）的 content 末尾，删除本块；本块的子块接到被合并块下；任一侧为 raw 返回 null。返回光标位置 = 被合并块原 content 长度。
+- `ensureId(doc, id, uuid)`：无 `id::` 时在 properties 末尾加入并置 `rawLines=null`；已有**合法 uuid** 则返回原值；`id::` 存在但非 uuid 时用新 uuid 覆盖其值（Logseq 只接受 uuid）**[修订 M07]**。
+- **子树重缩进规则**：indent/outdent 改变子孙深度时，子孙若 `rawLines !== null`，对每行做前缀位移（加一个 indentUnit，或去掉一个 indentUnit；去不掉时去掉实际前导空白中能去的部分并把该块 `rawLines=null`），不重新生成。空行保持为空字符串，不加不减前缀，也不因此置 `rawLines=null` **[修订 M08]**。
 - 所有 ops 之后 `serialize` 的输出中，**未被触及的块字节不变**（测试用 diff 行数断言）。
 
 ## 4. 页面身份（`index/pageName.ts`）

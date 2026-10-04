@@ -1,7 +1,7 @@
 import { useWorkspace } from '../store/workspace';
 import type { WorkspaceStore } from '../store/workspace';
+import Outline from '../editor/Outline';
 import Backlinks from './Backlinks';
-import ReadOnlyBlocks from './ReadOnlyBlocks';
 import './PageView.css';
 
 export default function PageView({ store }: { store?: WorkspaceStore }) {
@@ -37,10 +37,7 @@ export default function PageView({ store }: { store?: WorkspaceStore }) {
         )}
       </header>
       {path !== null ? (
-        <>
-          {/* OUTLINE_SLOT: replaced with <Outline path={path} /> after M4 merges */}
-          <ReadOnlyBlocks path={path} store={store} />
-        </>
+        <Outline path={path} store={store} />
       ) : (
         <p className="view-empty">此页面只被引用，尚无内容。</p>
       )}

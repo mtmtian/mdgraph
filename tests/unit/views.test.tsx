@@ -102,7 +102,8 @@ describe('PageView + Backlinks', () => {
     const store = await setup();
     render(<PageView store={store} />);
     open(store, 'Basic Page');
-    const refs = itemTexts().filter((t) => t.includes('((11111111-1111-4111-8111-111111111111))'));
+    // ((uuid)) renders as the referenced block's first line ("TODO second block"), not the raw uuid
+    const refs = itemTexts().filter((t) => t.includes('journal entry referencing') && t.includes('TODO second block'));
     expect(refs).toHaveLength(1);
     expect(refs[0]).toContain('journal entry referencing');
   });
@@ -116,7 +117,7 @@ describe('PageView + Backlinks', () => {
     open(store, 'a');
     expect(groupNames()).toEqual(['b']);
     const item = items()[0]!;
-    expect(item.textContent).toContain('see ((22222222');
+    expect(item.textContent).toContain('see target block'); // ((uuid)) resolved to the target block text
     expect(item.textContent).toContain('b › parent');
     expect(within(item).getByText('ref')).toBeTruthy();
 
@@ -169,13 +170,13 @@ describe('BlockText', () => {
 
     const container = document.querySelector('.block-text')!;
     expect(container.textContent).toBe('see [[Some Page]] and #tag and #[[multi word]]\nline two a#nottag');
-    expect(screen.getAllByRole('button')).toHaveLength(3);
+    expect(screen.getAllByRole('link')).toHaveLength(3);
 
-    await userEvent.click(screen.getByRole('button', { name: '[[Some Page]]' }));
+    await userEvent.click(screen.getByRole('link', { name: '[[Some Page]]' }));
     expect(store.getState().currentPage).toBe('some page');
-    await userEvent.click(screen.getByRole('button', { name: '#tag' }));
+    await userEvent.click(screen.getByRole('link', { name: '#tag' }));
     expect(store.getState().currentPage).toBe('tag');
-    await userEvent.click(screen.getByRole('button', { name: '#[[multi word]]' }));
+    await userEvent.click(screen.getByRole('link', { name: '#[[multi word]]' }));
     expect(store.getState().currentPage).toBe('multi word');
   });
 });

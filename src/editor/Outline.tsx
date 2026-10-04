@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
-import { toKey } from '../index/pageName';
 import { useWorkspace } from '../store/workspace';
 import type { WorkspaceStore } from '../store/workspace';
 import BlockEditor from './BlockEditor';
 import type { EditorActions } from './BlockEditor';
 import type { InlineContext } from './inline';
+import { makeInlineContext } from './inlineContext';
 import { caretInEditable, flatten } from './keys';
 import type { Caret, FocusRequest } from './keys';
 import './editor.css';
@@ -29,25 +29,7 @@ export default function Outline({ path, store: injected }: Props) {
     setFocusRequest({ id, caret, seq: ++seq.current });
   };
 
-  const inline: InlineContext = {
-    resolveBlock: (uuid) => {
-      const first = store.getState().index.state.blocks.get(uuid)?.block.content.split('\n', 1)[0];
-      return first === undefined ? undefined : first;
-    },
-    onOpenPage: (name) => store.getState().openPage(name),
-    onOpenBlock: (uuid) => {
-      const s = store.getState();
-      const loc = s.index.state.blocks.get(uuid);
-      if (!loc) return;
-      for (const p of s.index.state.pages.values()) {
-        if (p.path === loc.path) {
-          s.openPage(p.key || toKey(p.name));
-          break;
-        }
-      }
-      setTimeout(() => document.getElementById(uuid)?.scrollIntoView?.({ block: 'center' }), 0);
-    },
-  };
+  const inline: InlineContext = makeInlineContext(store);
 
   const commit = (id: string, text: string) => store.getState().setBlockText(path, id, text);
 
