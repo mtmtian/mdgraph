@@ -1,0 +1,37 @@
+/* System fonts only: the runtime must never load remote resources (PLAN.md §0.2). */
+:root {
+  --font: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --accent: #3b6ea5;
+  --border: #e5e7eb;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --accent: #7fb0e6;
+    --border: #2a2f36;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+code, pre, textarea.block-input { font-family: var(--mono); }
+
+a { color: var(--accent); }

@@ -1,0 +1,65 @@
+{
+  "_comment": "Expected index facts after importing fixtures/synthetic/graph (files under logseq/bak and non-.md files are skipped). Page keys are lower-cased names. Backlinks are listed as [path, first content line of the referencing block]; order is not significant. Hand-written from PLAN.md rules.",
+  "importedPaths": [
+    "journals/2022_06_25.md",
+    "pages/basic.md",
+    "pages/blank-between.md",
+    "pages/blank-lines.md",
+    "pages/bom.md",
+    "pages/code-fence.md",
+    "pages/crlf.md",
+    "pages/empty.md",
+    "pages/four-space.md",
+    "pages/mixed-raw.md",
+    "pages/ns%2Fchild.md",
+    "pages/other___deep.md",
+    "pages/tabs-no-eol.md"
+  ],
+  "pages": {
+    "basic page": { "name": "Basic Page", "path": "pages/basic.md" },
+    "basic": { "_comment": "file-derived name stays resolvable as alias of the title:: page", "resolvesTo": "basic page" },
+    "ns/child": { "name": "ns/child", "path": "pages/ns%2Fchild.md" },
+    "renamed deep": { "name": "Renamed Deep", "path": "pages/other___deep.md" },
+    "other/deep": { "resolvesTo": "renamed deep" },
+    "jun 25th, 2022": { "name": "Jun 25th, 2022", "path": "journals/2022_06_25.md" },
+    "link target": { "name": "Link Target", "path": null },
+    "tag": { "name": "tag", "path": null },
+    "multi word tag": { "name": "multi word tag", "path": null },
+    "demo": { "name": "demo", "path": null },
+    "project": { "name": "project", "path": null },
+    "real link": { "name": "Real Link", "path": null }
+  },
+  "pageBacklinks": {
+    "basic page": [
+      ["journals/2022_06_25.md", "journal entry referencing [[Basic Page]] and ((11111111-1111-4111-8111-111111111111))"],
+      ["pages/crlf.md", "crlf two [[Basic Page]]"],
+      ["pages/bom.md", "with bom [[Basic Page]]"],
+      ["pages/mixed-raw.md", "bullet after raw [[Basic Page]]"]
+    ],
+    "link target": [
+      ["pages/basic.md", "First block with a [[Link Target]] and a #tag"],
+      ["pages/basic.md", "DOING fourth [[Link Target]] again and [[link target]] lowercase"]
+    ],
+    "jun 25th, 2022": [
+      ["pages/ns%2Fchild.md", "namespace child page links [[Jun 25th, 2022]]"],
+      ["pages/ns%2Fchild.md", "date:: [[Jun 25th, 2022]]"]
+    ],
+    "ns/child": [
+      ["pages/other___deep.md", "links to [[ns/child]] and [[other/deep]] and [[Renamed Deep]]"]
+    ],
+    "demo": [
+      ["pages/basic.md", ""]
+    ]
+  },
+  "blockBacklinks": {
+    "11111111-1111-4111-8111-111111111111": [
+      ["pages/basic.md", "grandchild referencing ((11111111-1111-4111-8111-111111111111))"],
+      ["journals/2022_06_25.md", "journal entry referencing [[Basic Page]] and ((11111111-1111-4111-8111-111111111111))"]
+    ]
+  },
+  "_notes": [
+    "The block 'date:: [[Jun 25th, 2022]]' in ns%2Fchild.md is a bullet whose head line is itself a property line; it has properties [date] and empty content, and its property value produces a backlink with via='property'.",
+    "The raw first block of basic.md has empty content, so its backlink entry for 'demo' shows an empty first content line.",
+    "Self references (other___deep.md linking [[Renamed Deep]] / [[other/deep]]) ARE stored in the index; the Backlinks view hides entries whose source path equals the current page's path."
+  ]
+}

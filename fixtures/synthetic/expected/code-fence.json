@@ -1,0 +1,25 @@
+{
+  "_comment": "fixtures/synthetic/graph/pages/code-fence.md. Lines inside a ``` fence that starts in a continuation line stay continuation lines even if they look like bullets or headings. Inline code spans are excluded from link extraction.",
+  "indentUnit": "  ",
+  "blocks": [
+    {
+      "kind": "bullet", "depth": 0,
+      "content": "block with code\n```js\n- not a bullet\n  - also not a bullet\n# not a heading\n```",
+      "properties": [], "task": null, "links": [], "tags": [], "refs": [],
+      "children": [
+        {
+          "kind": "bullet", "depth": 1,
+          "content": "real child after fence",
+          "properties": [], "task": null, "links": [], "tags": [], "refs": [],
+          "children": []
+        }
+      ]
+    },
+    {
+      "kind": "bullet", "depth": 0,
+      "content": "`inline [[not a link]]` and real [[Real Link]]",
+      "properties": [], "task": null, "links": ["Real Link"], "tags": [], "refs": [],
+      "children": []
+    }
+  ]
+}

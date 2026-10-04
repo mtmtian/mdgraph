@@ -1,0 +1,31 @@
+{
+  "_comment": "fixtures/synthetic/graph/pages/mixed-raw.md. A raw run is every consecutive non-bullet line (including blank lines) until the next bullet line. Blank lines directly after a bullet block belong to that bullet block as continuation.",
+  "indentUnit": "  ",
+  "blocks": [
+    {
+      "kind": "raw", "depth": 0,
+      "content": "# 1. Heading without bullet\nplain paragraph line one\nplain paragraph line two\n",
+      "properties": [], "task": null, "links": [], "tags": [], "refs": [],
+      "children": []
+    },
+    {
+      "kind": "bullet", "depth": 0,
+      "content": "bullet after raw [[Basic Page]]",
+      "properties": [], "task": null, "links": ["Basic Page"], "tags": [], "refs": [],
+      "children": [
+        {
+          "kind": "bullet", "depth": 1,
+          "content": "nested",
+          "properties": [], "task": null, "links": [], "tags": [], "refs": [],
+          "children": []
+        }
+      ]
+    },
+    {
+      "kind": "raw", "depth": 0,
+      "content": "Another raw paragraph at the end",
+      "properties": [], "task": null, "links": [], "tags": [], "refs": [],
+      "children": []
+    }
+  ]
+}
