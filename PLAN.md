@@ -31,7 +31,7 @@ src/
 ├── editor/   Outline.tsx BlockEditor.tsx Autocomplete.tsx inline.ts(行内渲染) ← M4
 ├── views/    PageView.tsx PageList.tsx Backlinks.tsx ImportPanel.tsx ExportPanel.tsx StorageBanner.tsx ← M5
 ├── App.tsx main.tsx index.css                                               ← M3 建壳，M4/M5 只在各自组件内改
-tests/        unit/*.test.ts (vitest)  e2e/*.spec.ts (playwright)
+tests/        unit/*.test.ts (vitest；需要 DOM/IndexedDB 的测试文件第一行写 `// @vitest-environment jsdom`)  e2e/*.spec.ts (playwright)
 fixtures/synthetic/graph/   合成语料（已写，提交）   fixtures/synthetic/expected/*.json 手写期望
 fixtures/real/              不提交；真实语料通过环境变量 MDGRAPH_REAL_GRAPH 原地只读
 scripts/check-forbidden-api.mjs
