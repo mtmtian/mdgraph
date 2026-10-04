@@ -12,6 +12,7 @@ import {
 import { parse } from '../../src/parser/parse';
 import { serialize } from '../../src/parser/serialize';
 import type { Document } from '../../src/parser/types';
+import { editableTextOf } from '../../src/store/types';
 import { GRAPH_DIR, lineDiff, readText, simplifyDoc } from './helpers/parser';
 
 const UUID1 = '11111111-1111-4111-8111-111111111111';
@@ -350,5 +351,115 @@ describe('ops: untouched blocks keep identity and bytes', () => {
       expect(findBlock(r, first.id)!.block).toBe(first);
       expect(r.blocks[0]).toBe(doc.blocks[0]);
     }
+  });
+});
+
+describe('raw block model: content holds every line, properties are derived (P2)', () => {
+  const p = (text: string) => parse('r.md', text);
+
+  it('content includes the property lines; editableTextOf returns it verbatim', () => {
+    const doc = p('title:: x\nbody\n- b');
+    const raw = doc.blocks[0];
+    expect(raw.content).toBe('title:: x\nbody');
+    expect(raw.properties).toEqual([{ key: 'title', value: 'x' }]);
+    expect(editableTextOf(raw)).toBe('title:: x\nbody');
+    expect(editableTextOf(p('title:: x\n- b').blocks[0])).toBe('title:: x');
+  });
+
+  it('property-only raw block: edit round-trips without extra blank lines', () => {
+    const tight = p('title:: x\n- b');
+    const t = setBlockText(tight, tight.blocks[0].id, 'title:: y');
+    expect(serialize(t)).toBe('title:: y\n- b');
+    expect(t.blocks[0].properties).toEqual([{ key: 'title', value: 'y' }]);
+
+    const loose = p('title:: x\n\n- b');
+    expect(editableTextOf(loose.blocks[0])).toBe('title:: x\n');
+    const l = setBlockText(loose, loose.blocks[0].id, editableTextOf(loose.blocks[0]).replace('x', 'y'));
+    expect(serialize(l)).toBe('title:: y\n\n- b');
+    expectStable(l);
+  });
+
+  it('setBlockText on raw: properties, links, tags, refs re-derived; task stays null', () => {
+    const doc = p('# h\n- b');
+    const next = setBlockText(doc, doc.blocks[0].id, 'tags:: t1\nTODO see [[P]] ((' + UUID1 + '))');
+    const b = next.blocks[0];
+    expect(b.properties).toEqual([{ key: 'tags', value: 't1' }]);
+    expect([b.links, b.tags, b.refs, b.task]).toEqual([['P', 't1'], ['t1'], [UUID1], null]);
+    expect(b.rawLines).toBeNull();
+    expect(serialize(next)).toBe('tags:: t1\nTODO see [[P]] ((' + UUID1 + '))\n- b');
+    expectStable(next);
+  });
+
+  it('ensureId on raw: inserted after the leading property lines (or first), derived again', () => {
+    const doc = p('title:: x\ntags:: a\nbody\n- b');
+    const next = ensureId(doc, doc.blocks[0].id, UUID2);
+    expect(serialize(next)).toBe(`title:: x\ntags:: a\nid:: ${UUID2}\nbody\n- b`);
+    const b = findBlock(next, UUID2)!.block;
+    expect([b.persistentId, b.properties.map((q) => q.key)]).toEqual([true, ['title', 'tags', 'id']]);
+    expectStable(next);
+
+    const plain = p('# h\n- b');
+    expect(serialize(ensureId(plain, plain.blocks[0].id, UUID2))).toBe(`id:: ${UUID2}\n# h\n- b`);
+
+    const bad = p('id:: nope\nx');
+    expect(serialize(ensureId(bad, bad.blocks[0].id, UUID2))).toBe(`id:: ${UUID2}\nx`);
+    // a persistent raw id is left alone
+    const done = ensureId(doc, doc.blocks[0].id, UUID2);
+    expect(ensureId(done, UUID2, UUID1)).toBe(done);
+  });
+});
+
+describe('setBlockText keeps the runtime id', () => {
+  it('typing an id:: line into a bullet only changes properties, not block.id', () => {
+    const doc = parse('x.md', '- a\n- b');
+    const id = doc.blocks[0].id;
+    const next = setBlockText(doc, id, `a\nid:: ${UUID2}`);
+    const b = next.blocks[0];
+    expect(b.id).toBe(id);
+    expect(b.persistentId).toBe(false);
+    expect(b.properties).toEqual([{ key: 'id', value: UUID2 }]);
+    expect(serialize(next)).toBe(`- a\n  id:: ${UUID2}\n- b`);
+  });
+
+  it('a persistent bullet keeps its original id:: and id', () => {
+    const doc = load();
+    const next = setBlockText(doc, UUID1, `TODO x\nid:: ${UUID2}`);
+    const b = findBlock(next, UUID1)!.block;
+    expect([b.id, b.persistentId, b.properties]).toEqual([UUID1, true, [{ key: 'id', value: UUID1 }]]);
+  });
+});
+
+describe('mergeWithPrevious without flattening the document', () => {
+  it('a 10000-deep outline merges in well under a frame budget and stays correct', () => {
+    const depth = 10000;
+    const input = Array.from({ length: depth }, (_, d) => '\t'.repeat(d) + '- n' + d).join('\n');
+    const doc = parse('deep.md', input);
+    let deepest = doc.blocks[0];
+    while (deepest.children.length > 0) deepest = deepest.children[0];
+    const t0 = performance.now();
+    const res = mergeWithPrevious(doc, deepest.id)!;
+    const ms = performance.now() - t0;
+    expect(ms).toBeLessThan(50);
+    expect(res.caret).toBe(('n' + (depth - 2)).length);
+    expect(findBlock(res.doc, deepest.id)).toBeNull();
+    const out = serialize(res.doc).split('\n');
+    expect(out).toHaveLength(depth - 1);
+    expect(out[depth - 2]).toBe('\t'.repeat(depth - 2) + `- n${depth - 2}n${depth - 1}`);
+  });
+
+  it('first child: its children take its place, in front of the later siblings', () => {
+    const doc = parse('m.md', '- p\n  - t\n    - g\n  - s\n');
+    const res = mergeWithPrevious(doc, doc.blocks[0].children[0].id)!;
+    expect(serialize(res.doc)).toBe('- pt\n  - g\n  - s\n');
+    expect(res.caret).toBe(1);
+    expectStable(res.doc);
+  });
+
+  it('deepest last descendant of the previous sibling receives the target and its children', () => {
+    const doc = parse('m.md', '- a\n  - b\n    - c\n- t\n  - u\n');
+    const res = mergeWithPrevious(doc, idOf(doc, 't'))!;
+    expect(serialize(res.doc)).toBe('- a\n  - b\n    - ct\n      - u\n');
+    expect(res.blockId).toBe(idOf(doc, 'c'));
+    expectStable(res.doc);
   });
 });

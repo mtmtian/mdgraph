@@ -1,9 +1,11 @@
-import { deriveFields, fenceClose, fenceOpen, isUuid, newTmpId, splitBulletBody, splitRawBody } from './syntax';
-import type { Block, BulletMarker, Document, Property } from './types';
+import { fenceClose, fenceOpen, INDENT_WS, makeBlock, splitBullet, takeProperties } from './syntax';
+import type { Block, BulletMarker, Document } from './types';
 
 // `[^]` instead of `.` so a stray "\r" never defeats a match.
-const BULLET_RE = /^(\s*)([-*+])(?: ([^]*))?$/;
-const BLANK_RE = /^\s*$/;
+const BULLET_RE = new RegExp(`^(${INDENT_WS}*)([-*+])(?: ([^]*))?$`);
+const BLANK_RE = new RegExp(`^${INDENT_WS}*$`);
+const INDENTED_RE = new RegExp(`^${INDENT_WS}`);
+const LEADING_WS_RE = new RegExp(`^${INDENT_WS}*`);
 
 interface Group {
   kind: 'bullet' | 'raw';
@@ -32,7 +34,7 @@ function groupLines(lines: string[]): Group[] {
       fence = fenceOpen(head);
       continue;
     }
-    if (cur && cur.kind === 'bullet' && (BLANK_RE.test(line) || /^\s/.test(line))) {
+    if (cur && cur.kind === 'bullet' && (BLANK_RE.test(line) || INDENTED_RE.test(line))) {
       cur.lines.push(line);
     } else if (cur && cur.kind === 'raw') {
       cur.lines.push(line);
@@ -59,7 +61,7 @@ function detectContinuationIndent(groups: Group[]): string {
     for (let i = 1; i < g.lines.length; i++) {
       const line = g.lines[i];
       if (BLANK_RE.test(line) || !line.startsWith(g.indentWs)) continue;
-      const lead = /^\s*/.exec(line.slice(g.indentWs.length))![0];
+      const lead = LEADING_WS_RE.exec(line.slice(g.indentWs.length))![0];
       if (lead.length > 0) return lead;
     }
   }
@@ -81,29 +83,6 @@ function stripPrefix(line: string, prefix: string): string {
   let k = 0;
   while (k < prefix.length && k < line.length && (line[k] === ' ' || line[k] === '\t')) k++;
   return line.slice(k);
-}
-
-function buildBlock(
-  kind: 'bullet' | 'raw',
-  marker: BulletMarker,
-  depth: number,
-  content: string,
-  properties: Property[],
-  rawLines: string[],
-): Block {
-  const idProp = properties.find((p) => p.key === 'id' && isUuid(p.value.trim()));
-  return {
-    id: idProp ? idProp.value.trim() : newTmpId(),
-    persistentId: idProp !== undefined,
-    kind,
-    marker,
-    depth,
-    content,
-    properties,
-    ...deriveFields(kind, content, properties),
-    rawLines,
-    children: [],
-  };
 }
 
 export function parse(path: string, text: string): Document {
@@ -128,15 +107,30 @@ export function parse(path: string, text: string): Document {
   const stack: Block[] = [];
   for (const g of groups) {
     if (g.kind === 'raw') {
-      const { content, properties } = splitRawBody(g.lines);
-      doc.blocks.push(buildBlock('raw', '-', 0, content, properties, g.lines));
+      doc.blocks.push(
+        makeBlock({
+          kind: 'raw',
+          marker: '-',
+          depth: 0,
+          content: g.lines.join('\n'),
+          properties: takeProperties(g.lines, 0),
+          rawLines: g.lines,
+        }),
+      );
       stack.length = 0;
       continue;
     }
     const depth = depthOf(g.indentWs, indentUnit);
     const prefix = g.indentWs + continuationIndent;
-    const { content, properties } = splitBulletBody(g.head, g.lines.slice(1), (l) => stripPrefix(l, prefix));
-    const block = buildBlock('bullet', g.marker, depth, content, properties, g.lines);
+    const { head, properties, rest } = splitBullet([g.head, ...g.lines.slice(1)]);
+    const block = makeBlock({
+      kind: 'bullet',
+      marker: g.marker,
+      depth,
+      content: [head, ...rest.map((l) => stripPrefix(l, prefix))].join('\n'),
+      properties,
+      rawLines: g.lines,
+    });
     while (stack.length > 0 && stack[stack.length - 1].depth >= depth) stack.pop();
     const parent = stack.length > 0 ? stack[stack.length - 1] : null;
     (parent ? parent.children : doc.blocks).push(block);

@@ -4,13 +4,7 @@
  * `rawLines = null`; descendants that are only re-indented get their raw lines
  * prefix-shifted instead (so their bytes stay as close to the source as possible).
  */
-import {
-  deriveFields,
-  isUuid,
-  newTmpId,
-  splitBulletBody,
-  splitRawBody,
-} from './syntax';
+import { makeBlock, splitBullet, takeProperties, withBody } from './syntax';
 import type { Block, BlockRef, Document, Property } from './types';
 
 // ---------------------------------------------------------------------------
@@ -118,34 +112,32 @@ function shiftLines(lines: string[], delta: number, unit: string): string[] | nu
 }
 
 /**
- * Move a subtree by `delta` levels. `regenerate` marks the root as edited
- * (rawLines = null); descendants keep their raw lines, prefix-shifted.
+ * Move a subtree by `delta` levels, prefix-shifting every block's raw lines.
+ * Callers that edit the root clear its `rawLines` themselves.
  */
-function shiftBlock(block: Block, delta: number, unit: string, regenerate: boolean): Block {
-  if (delta === 0 && !regenerate) return block;
-  const shiftSelf = (b: Block, regen: boolean, children: Block[]): Block => {
-    let rawLines = b.rawLines;
-    if (regen) rawLines = null;
-    else if (rawLines !== null && b.kind === 'bullet') rawLines = shiftLines(rawLines, delta, unit);
-    return { ...b, depth: b.kind === 'bullet' ? b.depth + delta : b.depth, rawLines, children };
-  };
-  if (delta === 0) return shiftSelf(block, regenerate, block.children);
+function shiftBlock(block: Block, delta: number, unit: string): Block {
+  if (delta === 0) return block;
+  const shiftSelf = (b: Block, children: Block[]): Block => ({
+    ...b,
+    depth: b.kind === 'bullet' ? b.depth + delta : b.depth,
+    rawLines: b.rawLines !== null && b.kind === 'bullet' ? shiftLines(b.rawLines, delta, unit) : b.rawLines,
+    children,
+  });
 
   interface Frame {
     block: Block;
-    regen: boolean;
     done: Block[];
   }
-  const stack: Frame[] = [{ block, regen: regenerate, done: [] }];
+  const stack: Frame[] = [{ block, done: [] }];
   let result = block;
   while (stack.length > 0) {
     const f = stack[stack.length - 1];
     if (f.done.length < f.block.children.length) {
-      stack.push({ block: f.block.children[f.done.length], regen: false, done: [] });
+      stack.push({ block: f.block.children[f.done.length], done: [] });
       continue;
     }
     stack.pop();
-    const out = shiftSelf(f.block, f.regen, f.done);
+    const out = shiftSelf(f.block, f.done);
     if (stack.length > 0) stack[stack.length - 1].done.push(out);
     else result = out;
   }
@@ -161,39 +153,33 @@ function propsEqual(a: Property[], b: Property[]): boolean {
 
 /**
  * Replace a block's text from textarea content (see `editableTextOf` in
- * store/types.ts: head line, non-id property lines, remaining lines). The
- * block's original `id::` property is kept. When nothing actually changes the
- * same Document is returned, so an unedited blur never rewrites a block.
+ * store/types.ts). A raw block's text is its whole content; a bullet's text is
+ * head line, non-id property lines, remaining lines, and keeps its original
+ * `id::` property. The runtime id never changes. When nothing actually changes
+ * the same Document is returned, so an unedited blur never rewrites a block.
  */
 export function setBlockText(doc: Document, id: string, editableText: string): Document {
   const path = pathOf(doc.blocks, id);
   if (!path) return doc;
   const block = blockAt(doc, path);
   const lines = editableText.replace(/\r\n/g, '\n').split('\n');
-  const parsed =
-    block.kind === 'raw'
-      ? splitRawBody(lines)
-      : splitBulletBody(lines[0], lines.slice(1), (l) => l);
-
-  let properties = parsed.properties;
-  const oldIdIndex = block.properties.findIndex((p) => p.key === 'id');
-  if (oldIdIndex >= 0) {
-    properties = properties.filter((p) => p.key !== 'id');
-    properties.splice(Math.min(oldIdIndex, properties.length), 0, block.properties[oldIdIndex]);
+  let content: string;
+  let properties: Property[];
+  if (block.kind === 'raw') {
+    content = lines.join('\n');
+    properties = takeProperties(lines, 0);
+  } else {
+    const split = splitBullet(lines);
+    content = [split.head, ...split.rest].join('\n');
+    properties = split.properties;
+    const oldIdIndex = block.properties.findIndex((p) => p.key === 'id');
+    if (oldIdIndex >= 0) {
+      properties = properties.filter((p) => p.key !== 'id');
+      properties.splice(Math.min(oldIdIndex, properties.length), 0, block.properties[oldIdIndex]);
+    }
   }
-  if (parsed.content === block.content && propsEqual(properties, block.properties)) return doc;
-
-  const idProp = properties.find((p) => p.key === 'id' && isUuid(p.value.trim()));
-  const next: Block = {
-    ...block,
-    id: block.persistentId ? block.id : idProp ? idProp.value.trim() : block.id,
-    persistentId: block.persistentId || idProp !== undefined,
-    content: parsed.content,
-    properties,
-    ...deriveFields(block.kind, parsed.content, properties),
-    rawLines: null,
-  };
-  return replaceBlock(doc, path, next);
+  if (content === block.content && propsEqual(properties, block.properties)) return doc;
+  return replaceBlock(doc, path, withBody(block, content, properties));
 }
 
 // ---------------------------------------------------------------------------
@@ -208,21 +194,14 @@ export function insertAfter(doc: Document, id: string): { doc: Document; id: str
   if (!path) return null;
   const target = blockAt(doc, path);
   const asChild = target.kind === 'bullet' && target.children.length > 0;
-  const fresh: Block = {
-    id: newTmpId(),
-    persistentId: false,
+  const fresh = makeBlock({
     kind: 'bullet',
     marker: target.kind === 'bullet' ? target.marker : '-',
     depth: target.kind === 'raw' ? 0 : asChild ? target.depth + 1 : target.depth,
     content: '',
     properties: [],
-    task: null,
-    links: [],
-    tags: [],
-    refs: [],
     rawLines: null,
-    children: [],
-  };
+  });
   if (asChild) {
     return {
       doc: replaceBlock(doc, path, { ...target, children: [fresh, ...target.children] }),
@@ -251,7 +230,7 @@ export function indent(doc: Document, id: string): Document {
   const siblings = path.length === 1 ? doc.blocks : blockAt(doc, path.slice(0, -1)).children;
   const prev = siblings[idx - 1];
   if (prev.kind === 'raw') return doc;
-  const moved = shiftBlock(block, prev.depth + 1 - block.depth, doc.indentUnit, true);
+  const moved: Block = { ...shiftBlock(block, prev.depth + 1 - block.depth, doc.indentUnit), rawLines: null };
   return withBlocks(
     doc,
     modifySiblings(doc.blocks, path, (sibs, i) => [
@@ -277,10 +256,10 @@ export function outdent(doc: Document, id: string): Document {
     modifySiblings(doc.blocks, parentPath, (sibs, pi) => {
       const parent = sibs[pi];
       const delta = parent.depth - block.depth;
-      const base = shiftBlock(block, delta, doc.indentUnit, true);
+      const base: Block = { ...shiftBlock(block, delta, doc.indentUnit), rawLines: null };
       const later = parent.children
         .slice(idx + 1)
-        .map((c) => shiftBlock(c, base.depth + 1 - c.depth, doc.indentUnit, false));
+        .map((c) => shiftBlock(c, base.depth + 1 - c.depth, doc.indentUnit));
       const moved: Block = { ...base, children: [...base.children, ...later] };
       const trimmed: Block = { ...parent, children: parent.children.slice(0, idx) };
       return [...sibs.slice(0, pi), trimmed, moved, ...sibs.slice(pi + 1)];
@@ -291,95 +270,83 @@ export function outdent(doc: Document, id: string): Document {
 // ---------------------------------------------------------------------------
 // mergeWithPrevious
 
-function flatten(blocks: Block[]): { path: number[]; block: Block }[] {
-  const out: { path: number[]; block: Block }[] = [];
-  const stack: { path: number[]; block: Block }[] = [];
-  for (let i = blocks.length - 1; i >= 0; i--) stack.push({ path: [i], block: blocks[i] });
-  while (stack.length > 0) {
-    const e = stack.pop()!;
-    out.push(e);
-    for (let i = e.block.children.length - 1; i >= 0; i--) {
-      stack.push({ path: [...e.path, i], block: e.block.children[i] });
-    }
+/**
+ * The previous visible block: the previous sibling's deepest last descendant,
+ * or the parent when `path` is a first child. null for the very first block.
+ */
+function previousVisiblePath(doc: Document, path: number[]): number[] | null {
+  const last = path[path.length - 1];
+  if (last === 0) return path.length > 1 ? path.slice(0, -1) : null;
+  const prevPath = [...path.slice(0, -1), last - 1];
+  let b = blockAt(doc, prevPath);
+  while (b.children.length > 0) {
+    prevPath.push(b.children.length - 1);
+    b = b.children[b.children.length - 1];
   }
-  return out;
+  return prevPath;
 }
 
 /**
  * Append this block's content to the previous visible block and delete it; its
- * children move under the merged block. `caret` = length of the merged block's
- * content before the append. null when there is nothing to merge into (first
- * block, or either side is a raw block).
+ * children move under the merged block, keeping their place in the outline.
+ * `caret` = length of the merged block's content before the append. null when
+ * there is nothing to merge into (first block, or either side is a raw block).
  */
 export function mergeWithPrevious(
   doc: Document,
   id: string,
 ): { doc: Document; blockId: string; caret: number } | null {
-  const flat = flatten(doc.blocks);
-  const at = flat.findIndex((e) => e.block.id === id);
-  if (at <= 0) return null;
-  const target = flat[at];
-  const prev = flat[at - 1];
-  if (target.block.kind === 'raw' || prev.block.kind === 'raw') return null;
+  const path = pathOf(doc.blocks, id);
+  if (!path) return null;
+  const prevPath = previousVisiblePath(doc, path);
+  if (!prevPath) return null;
+  const target = blockAt(doc, path);
+  const prev = blockAt(doc, prevPath);
+  if (target.kind === 'raw' || prev.kind === 'raw') return null;
 
-  const t = target.block;
-  const m = prev.block;
-  const caret = m.content.length;
-  const content = m.content + t.content;
-  const properties = [...m.properties, ...t.properties.filter((p) => p.key !== 'id')];
-  const adopted = t.children.map((c) => shiftBlock(c, m.depth + 1 - c.depth, doc.indentUnit, false));
-  const mergedBase: Block = {
-    ...m,
-    content,
-    properties,
-    ...deriveFields('bullet', content, properties),
-    rawLines: null,
+  // The previous block is either a childless leaf (adopted children go after
+  // its none) or the parent, whose first child is the target (adopted children
+  // take its place at the front).
+  const prevIsParent = prevPath.length < path.length;
+  const adopted = target.children.map((c) => shiftBlock(c, prev.depth + 1 - c.depth, doc.indentUnit));
+  const without = modifySiblings(doc.blocks, path, (sibs, i) => [...sibs.slice(0, i), ...sibs.slice(i + 1)]);
+  const current = blockAt({ ...doc, blocks: without }, prevPath);
+  const merged: Block = {
+    ...withBody(current, prev.content + target.content, [
+      ...prev.properties,
+      ...target.properties.filter((p) => p.key !== 'id'),
+    ]),
+    children: prevIsParent ? [...adopted, ...current.children] : [...current.children, ...adopted],
   };
-
-  const targetParentPath = target.path.slice(0, -1);
-  const isParent =
-    prev.path.length === targetParentPath.length && prev.path.every((v, i) => v === targetParentPath[i]);
-
-  let blocks: Block[];
-  if (isParent) {
-    // target is the first child of the merged block: its children take its place.
-    const merged: Block = { ...mergedBase, children: [...adopted, ...m.children.slice(1)] };
-    blocks = modifySiblings(doc.blocks, prev.path, (sibs, i) => [
-      ...sibs.slice(0, i),
-      merged,
-      ...sibs.slice(i + 1),
-    ]);
-  } else {
-    // merged block is the deepest last descendant of the previous sibling (no children).
-    const merged: Block = { ...mergedBase, children: adopted };
-    blocks = modifySiblings(doc.blocks, prev.path, (sibs, i) => [
-      ...sibs.slice(0, i),
-      merged,
-      ...sibs.slice(i + 1),
-    ]);
-    blocks = modifySiblings(blocks, target.path, (sibs, i) => [...sibs.slice(0, i), ...sibs.slice(i + 1)]);
-  }
-  return { doc: withBlocks(doc, blocks), blockId: m.id, caret };
+  return { doc: replaceBlock({ ...doc, blocks: without }, prevPath, merged), blockId: prev.id, caret: prev.content.length };
 }
 
 // ---------------------------------------------------------------------------
 // ensureId
 
 /**
- * Give the block a persistent `id::` property (uuid supplied by the caller),
- * appended at the end of its properties. Returns the same Document when the
- * block already has a persistent id. The block's runtime id becomes the uuid.
+ * Give the block a persistent `id::` property (uuid supplied by the caller): at
+ * the end of a bullet's properties, after the leading property lines of a raw
+ * block's content. A non-uuid `id::` is overwritten. Returns the same Document
+ * when the block already has a persistent id. The block's runtime id becomes
+ * the uuid.
  */
 export function ensureId(doc: Document, id: string, uuid: string): Document {
   const path = pathOf(doc.blocks, id);
   if (!path) return doc;
   const block = blockAt(doc, path);
   if (block.persistentId) return doc;
+  const idProp: Property = { key: 'id', value: uuid };
   const existing = block.properties.findIndex((p) => p.key === 'id');
-  const properties =
-    existing >= 0
-      ? block.properties.map((p, i) => (i === existing ? { key: 'id', value: uuid } : p))
-      : [...block.properties, { key: 'id', value: uuid }];
-  return replaceBlock(doc, path, { ...block, id: uuid, persistentId: true, properties, rawLines: null });
+  let next: Block;
+  if (block.kind === 'raw') {
+    const lines = block.content.split('\n');
+    lines.splice(existing >= 0 ? existing : block.properties.length, existing >= 0 ? 1 : 0, 'id:: ' + uuid);
+    next = withBody(block, lines.join('\n'), takeProperties(lines, 0));
+  } else {
+    const properties =
+      existing >= 0 ? block.properties.map((p, i) => (i === existing ? idProp : p)) : [...block.properties, idProp];
+    next = withBody(block, block.content, properties);
+  }
+  return replaceBlock(doc, path, { ...next, id: uuid, persistentId: true });
 }
-
