@@ -21,15 +21,13 @@ export function computeItems(kind: TriggerKind, query: string, index: IndexApi, 
     return [...real.sort(byName), ...virtual.sort(byName)].slice(0, LIMIT);
   }
   if (!query.trim()) return [];
-  const pageOf = new Map<string, string>();
-  for (const p of index.state.pages.values()) if (p.path !== null) pageOf.set(p.path, p.name);
   const items: AcItem[] = [];
   for (const hit of index.search(query, LIMIT + 1)) {
     if (hit.blockId === excludeBlockId) continue;
     const loc = index.state.blocks.get(hit.blockId);
     if (!loc) continue;
     const label = loc.block.content.split('\n', 1)[0] || loc.block.properties.map((p) => `${p.key}:: ${p.value}`)[0] || '';
-    items.push({ kind: 'block', path: hit.path, blockId: hit.blockId, label, pageName: pageOf.get(hit.path) ?? hit.path });
+    items.push({ kind: 'block', path: hit.path, blockId: hit.blockId, label, pageName: index.pageOfPath(hit.path)?.name ?? hit.path });
     if (items.length >= LIMIT) break;
   }
   return items;

@@ -10,10 +10,11 @@ import { parse } from '../parser/parse';
 import { serialize } from '../parser/serialize';
 import type { Document } from '../parser/types';
 import { createFileStore } from '../storage/idb';
-import type { FileRecord, FileStore, ImportedFile } from '../storage/types';
+import type { FileRecord, FileStore, ImportedFile, ImportedFileStream, WorkspaceMeta } from '../storage/types';
 import type { WorkspaceState } from './types';
 
 const PARSE_BATCH = 50;
+const FAILED_SHOWN = 3;
 
 export interface WorkspaceDeps {
   fileStore: FileStore;
@@ -26,8 +27,17 @@ export interface WorkspaceDeps {
   };
 }
 
-/** The zustand hook plus `flush()`: resolves once every queued IndexedDB write has landed. */
+/** The zustand hook plus `flush()`: resolves once every queued IndexedDB operation has finished. */
 export type WorkspaceStore = UseBoundStore<StoreApi<WorkspaceState>> & { flush(): Promise<void> };
+
+/** Everything the workspace knows about one file. `dirty` <=> `text !== importedText`. */
+interface FileState {
+  doc: Document;
+  /** serialize(doc), cached. */
+  text: string;
+  /** Text at import / last export. */
+  importedText: string;
+}
 
 const yieldToMain = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -42,66 +52,97 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
   const uuid = deps.uuid ?? (() => crypto.randomUUID());
   const download = deps.download ?? { zip: downloadZip, markdown: downloadMarkdown };
 
-  /** Current serialized text and the text at import/last export, per path. `dirty` = they differ. */
-  const texts = new Map<string, string>();
-  const imported = new Map<string, string>();
-  /** Serial queue of IndexedDB writes, so edits to one file land in order. */
-  let pending: Promise<void> = Promise.resolve();
+  /** The single source of truth for file contents; `docs` and `dirty` in the store are derived from it by `publish`. */
+  let files = new Map<string, FileState>();
+  /** Bumped whenever `files` is replaced wholesale (boot / import), so stale export bookkeeping can be dropped. */
+  let epoch = 0;
   let booting: Promise<void> | null = null;
-  const flush = () => pending;
+
+  /** Every IndexedDB operation goes through this one queue: boot reads, edits, imports, export marks. */
+  let tail: Promise<unknown> = Promise.resolve();
+  function enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = tail.then(task);
+    tail = run.catch(() => undefined);
+    return run;
+  }
+  const flush = (): Promise<void> => tail.then(() => undefined);
 
   const useStore = create<WorkspaceState>()((set, get) => {
     const notice = (msg: string) => set((s) => ({ notices: [...s.notices, msg] }));
 
-    function enqueue(task: () => Promise<void>, what: string): void {
-      pending = pending.then(task).catch((e) => notice(`${what}失败：${messageOf(e)}`));
-    }
-
-    function dirtyWith(paths: Iterable<string>): Set<string> {
-      const dirty = new Set(get().dirty);
-      for (const p of paths) {
-        if (texts.get(p) !== imported.get(p) && texts.has(p)) dirty.add(p);
+    /**
+     * Derive `docs` and `dirty` from `files`, for `paths` only or (null) from scratch,
+     * and set them together with `extra`.
+     */
+    function publish(paths: Iterable<string> | null, extra: Partial<WorkspaceState> = {}): void {
+      const docs = paths === null ? new Map<string, Document>() : new Map(get().docs);
+      const dirty = paths === null ? new Set<string>() : new Set(get().dirty);
+      for (const p of paths ?? files.keys()) {
+        const f = files.get(p);
+        if (!f) {
+          docs.delete(p);
+          dirty.delete(p);
+          continue;
+        }
+        docs.set(p, f.doc);
+        if (f.text !== f.importedText) dirty.add(p);
         else dirty.delete(p);
       }
-      return dirty;
+      set({ ...extra, docs, dirty });
     }
+
+    /** Edits are frozen while an import is replacing the workspace. */
+    const docOf = (path: string): Document | undefined => (get().importing ? undefined : files.get(path)?.doc);
 
     /** Write path after an op produced `doc`: serialize -> persist (queued) -> index -> publish. */
     function commit(doc: Document): void {
       const path = doc.path;
+      const prev = files.get(path);
+      if (!prev) return;
       const text = serialize(doc);
-      texts.set(path, text);
+      files.set(path, { doc, text, importedText: prev.importedText });
       const stamp = now();
-      enqueue(() => fileStore.updateText(path, text, stamp), '保存');
+      enqueue(() => fileStore.updateText(path, text, stamp)).catch((e) => notice(`保存失败：${messageOf(e)}`));
       index.upsertDocument(doc);
-      set({ docs: new Map(get().docs).set(path, doc), dirty: dirtyWith([path]) });
+      publish([path]);
+    }
+
+    /** Apply a document-to-document op to one file. */
+    function edit(path: string, op: (doc: Document) => Document): void {
+      const doc = docOf(path);
+      if (!doc) return;
+      const next = op(doc);
+      if (next !== doc) commit(next);
     }
 
     /** Locate the document that holds a block, preferring `path`. */
     function locate(path: string, blockId: string): Document | undefined {
-      const preferred = get().docs.get(path);
+      const preferred = docOf(path);
       if (preferred && ops.findBlock(preferred, blockId)) return preferred;
       const owner = index.state.blocks.get(blockId)?.path;
-      return owner === undefined ? undefined : get().docs.get(owner);
+      return owner === undefined ? undefined : docOf(owner);
     }
 
-    async function parseRecords(records: FileRecord[]): Promise<Map<string, Document>> {
-      const docs = new Map<string, Document>();
-      for (let i = 0; i < records.length; i += PARSE_BATCH) {
-        for (const r of records.slice(i, i + PARSE_BATCH)) docs.set(r.path, parse(r.path, r.text));
-        if (i + PARSE_BATCH < records.length) await yieldToMain();
-      }
-      return docs;
+    function noticeConflicts(): void {
+      const dups = index.duplicateIds();
+      if (dups.length === 0) return;
+      const shown = dups
+        .slice(0, FAILED_SHOWN)
+        .map((d) => `${d.id}（${d.paths.join('、')}）`)
+        .join('；');
+      notice(`发现 ${dups.length} 个块 id 在多个文件中重复，仅第一个文件的块可被引用：${shown}${dups.length > FAILED_SHOWN ? ' 等' : ''}`);
     }
 
-    async function markExported(files: ExportFile[]): Promise<void> {
-      const paths = files.map((f) => f.path);
-      await fileStore.markExported(paths);
-      for (const f of files) imported.set(f.path, f.text);
-      set({ dirty: dirtyWith(paths) });
+    /** Swap in a freshly built file set: index, derived state and conflict notice in one step. */
+    function adopt(next: Map<string, FileState>, extra: Partial<WorkspaceState>): void {
+      files = next;
+      epoch++;
+      index.rebuildAll([...next.values()].map((f) => f.doc));
+      publish(null, extra);
+      noticeConflicts();
     }
 
-    async function bootOnce(): Promise<void> {
+    async function bootTask(): Promise<void> {
       const probe = await fileStore.probe();
       set({ probe });
       if (!probe.indexedDb.ok) {
@@ -110,18 +151,71 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       }
       try {
         const [meta, records] = await Promise.all([fileStore.getMeta(), fileStore.getAll()]);
-        texts.clear();
-        imported.clear();
-        for (const r of records) {
-          texts.set(r.path, r.text);
-          imported.set(r.path, r.importedText);
+        const next = new Map<string, FileState>();
+        for (let i = 0; i < records.length; i += PARSE_BATCH) {
+          for (const r of records.slice(i, i + PARSE_BATCH)) {
+            next.set(r.path, { doc: parse(r.path, r.text), text: r.text, importedText: r.importedText });
+          }
+          if (i + PARSE_BATCH < records.length) await yieldToMain();
         }
-        const docs = await parseRecords(records);
-        index.rebuildAll(docs.values());
-        set({ workspaceName: meta?.name ?? null, docs, dirty: dirtyWith(docs.keys()) });
+        adopt(next, { workspaceName: meta?.name ?? null });
       } catch (e) {
         notice(`读取已保存的工作区失败：${messageOf(e)}`);
       }
+    }
+
+    /**
+     * Read + parse everything first (progress reported here), then land it in IndexedDB in one
+     * transaction, and only then replace the in-memory state. Any failure leaves both untouched.
+     */
+    async function importTask(workspaceName: string, source: AsyncIterable<ImportedFile> | ImportedFile[], total: number): Promise<void> {
+      const stream = source as ImportedFileStream;
+      const next = new Map<string, FileState>();
+      let received = 0;
+      const progress = () => set({ importing: { done: received, total, failed: [...(stream.failed ?? [])] } });
+      for await (const f of stream) {
+        next.set(f.path, { doc: parse(f.path, f.text), text: f.text, importedText: f.text });
+        received++;
+        if (received % PARSE_BATCH === 0) {
+          progress();
+          await yieldToMain();
+        }
+      }
+      if (received % PARSE_BATCH !== 0) progress();
+
+      const stamp = now();
+      const records: FileRecord[] = [...next].map(([path, f]) => ({ path, text: f.text, importedText: f.text, updatedAt: stamp }));
+      const meta: WorkspaceMeta = { id: 'default', name: workspaceName, importedAt: stamp, fileCount: next.size };
+      await fileStore.replaceAll(records, meta);
+
+      adopt(next, { workspaceName, currentPage: null, importing: null });
+      if (received < total) {
+        const failed = stream.failed ?? [];
+        const names = failed.length > 0 ? `：${failed.slice(0, FAILED_SHOWN).join('、')}${failed.length > FAILED_SHOWN ? ' 等' : ''}` : '';
+        notice(`${total - received} 个文件读取失败，已跳过${names}。`);
+      }
+    }
+
+    /** Record that `exported` is now what the user has on disk (unless the workspace was replaced meanwhile). */
+    function markExported(exported: ExportFile[], at: number): Promise<void> {
+      return enqueue(async () => {
+        if (at !== epoch) return;
+        await fileStore.markExported(exported);
+        for (const f of exported) {
+          const cur = files.get(f.path);
+          if (cur) files.set(f.path, { ...cur, importedText: f.text });
+        }
+        publish(exported.map((f) => f.path));
+      });
+    }
+
+    function snapshot(paths: Iterable<string>): ExportFile[] {
+      const out: ExportFile[] = [];
+      for (const path of paths) {
+        const f = files.get(path);
+        if (f) out.push({ path, text: f.text });
+      }
+      return out;
     }
 
     return {
@@ -135,49 +229,22 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       notices: [],
 
       boot() {
-        booting ??= bootOnce().finally(() => {
-          booting = null;
-        });
+        booting ??= enqueue(bootTask)
+          .catch((e) => notice(`启动失败：${messageOf(e)}`))
+          .finally(() => {
+            booting = null;
+          });
         return booting;
       },
 
-      async importFiles(workspaceName, files, total) {
+      async importFiles(workspaceName, source, total) {
+        if (get().importing) {
+          notice('正在导入，请等当前导入结束后再试。');
+          return;
+        }
         set({ importing: { done: 0, total, failed: [] } });
         try {
-          await flush();
-          await fileStore.clear();
-          texts.clear();
-          imported.clear();
-          const docs = new Map<string, Document>();
-          let batch: ImportedFile[] = [];
-          const stamp = now();
-          const drain = async (): Promise<void> => {
-            if (batch.length === 0) return;
-            const records: FileRecord[] = batch.map((f) => ({
-              path: f.path,
-              text: f.text,
-              importedText: f.text,
-              updatedAt: stamp,
-            }));
-            for (const f of batch) {
-              docs.set(f.path, parse(f.path, f.text));
-              texts.set(f.path, f.text);
-              imported.set(f.path, f.text);
-            }
-            batch = [];
-            await fileStore.putMany(records);
-            set({ importing: { done: docs.size, total, failed: [] } });
-            await yieldToMain();
-          };
-          for await (const f of files) {
-            batch.push(f);
-            if (batch.length >= PARSE_BATCH) await drain();
-          }
-          await drain();
-          await fileStore.putMeta({ id: 'default', name: workspaceName, importedAt: stamp, fileCount: docs.size });
-          index.rebuildAll(docs.values());
-          set({ workspaceName, docs, dirty: new Set(), currentPage: null });
-          if (docs.size < total) notice(`${total - docs.size} 个文件读取失败，已跳过。`);
+          await enqueue(() => importTask(workspaceName, source, total));
         } catch (e) {
           notice(`导入失败：${messageOf(e)}`);
         } finally {
@@ -186,10 +253,9 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       },
 
       rebuildAll() {
-        const docs = get().docs;
-        index.rebuildAll(docs.values());
+        index.rebuildAll([...files.values()].map((f) => f.doc));
         // New Map identity so subscribers re-read the (mutable) index.
-        set({ docs: new Map(docs) });
+        publish(null);
       },
 
       openPage(nameOrKey) {
@@ -197,14 +263,11 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       },
 
       setBlockText(path, blockId, editableText) {
-        const doc = get().docs.get(path);
-        if (!doc) return;
-        const next = ops.setBlockText(doc, blockId, editableText);
-        if (next !== doc) commit(next);
+        edit(path, (doc) => ops.setBlockText(doc, blockId, editableText));
       },
 
       insertAfter(path, blockId) {
-        const doc = get().docs.get(path);
+        const doc = docOf(path);
         const r = doc ? ops.insertAfter(doc, blockId) : null;
         if (!r) return blockId;
         commit(r.doc);
@@ -212,21 +275,15 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       },
 
       indent(path, blockId) {
-        const doc = get().docs.get(path);
-        if (!doc) return;
-        const next = ops.indent(doc, blockId);
-        if (next !== doc) commit(next);
+        edit(path, (doc) => ops.indent(doc, blockId));
       },
 
       outdent(path, blockId) {
-        const doc = get().docs.get(path);
-        if (!doc) return;
-        const next = ops.outdent(doc, blockId);
-        if (next !== doc) commit(next);
+        edit(path, (doc) => ops.outdent(doc, blockId));
       },
 
       mergeWithPrevious(path, blockId) {
-        const doc = get().docs.get(path);
+        const doc = docOf(path);
         const r = doc ? ops.mergeWithPrevious(doc, blockId) : null;
         if (!r) return null;
         commit(r.doc);
@@ -247,26 +304,29 @@ export function createWorkspaceStore(deps: WorkspaceDeps): WorkspaceStore {
       },
 
       async exportZip(mode) {
+        if (get().importing) return;
         await flush();
-        const paths = (mode === 'changed' ? [...get().dirty] : [...texts.keys()]).sort();
-        if (paths.length === 0) return;
-        const files = paths.map((p) => ({ path: p, text: texts.get(p)! }));
+        const list = snapshot((mode === 'changed' ? [...get().dirty] : [...files.keys()]).sort());
+        if (list.length === 0) return;
         const name = get().workspaceName ?? 'mdgraph';
+        const at = epoch;
         try {
-          await download.zip(mode === 'changed' ? `${name}-changed.zip` : `${name}.zip`, files);
-          await markExported(files);
+          await download.zip(mode === 'changed' ? `${name}-changed.zip` : `${name}.zip`, list);
+          await markExported(list, at);
         } catch (e) {
           notice(`导出失败：${messageOf(e)}`);
         }
       },
 
       async exportFile(path) {
+        if (get().importing) return;
         await flush();
-        const text = texts.get(path);
-        if (text === undefined) return;
+        const list = snapshot([path]);
+        if (list.length === 0) return;
+        const at = epoch;
         try {
-          await download.markdown(path, text);
-          await markExported([{ path, text }]);
+          await download.markdown(path, list[0].text);
+          await markExported(list, at);
         } catch (e) {
           notice(`导出失败：${messageOf(e)}`);
         }

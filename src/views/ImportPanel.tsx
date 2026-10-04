@@ -9,7 +9,10 @@ export default function ImportPanel() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [over, setOver] = useState(false);
 
+  const isBusy = (): boolean => useWorkspace.getState().importing !== null;
+
   const run = async (source: ImportSource): Promise<void> => {
+    if (isBusy()) return;
     if (source.total === 0) {
       window.alert('所选内容里没有可导入的 .md 文件。');
       return;
@@ -27,7 +30,7 @@ export default function ImportPanel() {
     const input = inputRef.current;
     const list = input?.files;
     if (!input || !list || list.length === 0) return;
-    const proceed = confirmOverwrite();
+    const proceed = !isBusy() && confirmOverwrite();
     const source = proceed ? filesFromInput(list) : null;
     // Allow picking the same folder again.
     input.value = '';
@@ -37,9 +40,10 @@ export default function ImportPanel() {
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
     setOver(false);
+    if (isBusy()) return;
     // Entries are only readable synchronously inside the drop event.
     const pending = filesFromDrop(e.dataTransfer.items);
-    void pending.then((source) => (confirmOverwrite() ? run(source) : undefined));
+    void pending.then((source) => (!isBusy() && confirmOverwrite() ? run(source) : undefined));
   };
 
   const busy = importing !== null;

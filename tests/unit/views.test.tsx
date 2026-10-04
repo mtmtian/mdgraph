@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 import 'fake-indexeddb/auto';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createFileStore } from '../../src/storage/idb';
 import type { ImportedFile } from '../../src/storage/types';
-import { createWorkspaceStore } from '../../src/store/workspace';
+import { createWorkspaceStore, useWorkspace } from '../../src/store/workspace';
 import type { WorkspaceStore } from '../../src/store/workspace';
 import BlockText from '../../src/views/BlockText';
+import ImportPanel from '../../src/views/ImportPanel';
 import PageView from '../../src/views/PageView';
 import { importedFiles } from './index.graphHelpers';
 
@@ -178,5 +179,31 @@ describe('BlockText', () => {
     expect(store.getState().currentPage).toBe('tag');
     await userEvent.click(screen.getByRole('link', { name: '#[[multi word]]' }));
     expect(store.getState().currentPage).toBe('multi word');
+  });
+});
+
+describe('ImportPanel while an import is running', () => {
+  test('picking or dropping a folder is ignored, without even asking to confirm the overwrite', async () => {
+    const importFiles = vi.fn(async () => {});
+    const original = useWorkspace.getState().importFiles;
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    useWorkspace.setState({ importFiles, importing: { done: 1, total: 5, failed: [] }, dirty: new Set(['a.md']) });
+    try {
+      render(<ImportPanel />);
+      expect((screen.getByRole('button', { name: '导入文件夹' }) as HTMLButtonElement).disabled).toBe(true);
+
+      const input = screen.getByTestId('import-input') as HTMLInputElement;
+      const file = new File(['- x'], 'a.md', { type: 'text/markdown' });
+      fireEvent.change(input, { target: { files: [file] } });
+      const zone = screen.getByText(/导入中 1\/5/);
+      fireEvent.drop(zone, { dataTransfer: { items: [] } });
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(confirm).not.toHaveBeenCalled();
+      expect(importFiles).not.toHaveBeenCalled();
+    } finally {
+      useWorkspace.setState({ importFiles: original, importing: null, dirty: new Set() });
+      confirm.mockRestore();
+    }
   });
 });

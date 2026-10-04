@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import type { PageEntry } from '../index/types';
 import { useWorkspace } from '../store/workspace';
 
 const firstLine = (s: string): string => s.split('\n', 1)[0] ?? '';
@@ -18,11 +17,6 @@ export default function PageList() {
     // oxlint-disable-next-line react-hooks/exhaustive-deps
     [index, docs],
   );
-  const byPath = useMemo(() => {
-    const m = new Map<string, PageEntry>();
-    for (const p of pages) if (p.path !== null) m.set(p.path, p);
-    return m;
-  }, [pages]);
   // oxlint-disable-next-line react-hooks/exhaustive-deps
   const hits = useMemo(() => (query.trim() ? index.search(query) : null), [index, docs, query]);
 
@@ -39,7 +33,7 @@ export default function PageList() {
         <ul className="page-items" aria-label="搜索结果">
           {hits.length === 0 && <li className="page-empty">无结果</li>}
           {hits.map((h) => {
-            const page = byPath.get(h.path);
+            const page = index.pageOfPath(h.path);
             const block = index.state.blocks.get(h.blockId)?.block;
             return (
               <li key={h.blockId}>

@@ -1,5 +1,5 @@
 import type { Document } from '../parser/types';
-import type { PageKey, PageNameApi } from './types';
+import type { PageKey } from './types';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const JOURNAL_RE = /^(\d{4})[_-](\d{2})[_-](\d{2})$/;
@@ -54,5 +54,3 @@ export function titleOf(doc: Document): string | undefined {
   const title = first.properties.find((p) => p.key === 'title')?.value.trim();
   return title ? title : undefined;
 }
-
-export const pageName: PageNameApi = { nameFromPath, toKey };
