@@ -112,7 +112,7 @@ pnpm vitest run tests/unit/parser
 测试必须包含：
 1. 幂等：`fixtures/synthetic/graph/**/*.md` 每个文件 `serialize(parse(buf)) === buf`（按字节比较，先用 `TextDecoder` 保留 BOM 即 `{ ignoreBOM: true }`）。
 2. 结构：`fixtures/synthetic/expected/{basic,code-fence,mixed-raw}.json` 与简化后的解析结果深比较。
-3. 真实语料：`MDGRAPH_REAL_GRAPH` 环境变量指向目录时，递归所有 `.md`（跳过 `logseq/`、`bak/`、`.recycle/`）做幂等检查；变量缺失时 `test.skip` 并打印提示。主会话会用 `/Users/mt/Library/Mobile Documents/iCloud~com~logseq~logseq/Documents` 跑一次。
+3. 真实语料：`MDGRAPH_REAL_GRAPH` 环境变量指向目录时，递归所有 `.md`（跳过 `logseq/`、`bak/`、`.recycle/`）做幂等检查；变量缺失时 `test.skip` 并打印提示。主会话会用本机的真实 Logseq graph 目录跑一次。
 4. ops：对 basic.md 各执行一次 setBlockText / insertAfter / indent / outdent / mergeWithPrevious / ensureId，用**手写的期望文本**（写在测试里）比较 serialize 结果，并断言未触及行与原文件逐行相同。
 5. 属性测试：随机生成 200 个由 bullet/raw/空行/属性行/围栏/不同缩进组成的文件，幂等必须成立（种子固定，失败时打印样本）。
 

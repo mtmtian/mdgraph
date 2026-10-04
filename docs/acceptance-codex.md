@@ -45,7 +45,7 @@ Firefox 在创建浏览器页面之前即 `SIGABRT` 退出。已按任务说明�
 环境实测：macOS 27.2 / arm64；Node `v24.18.1`；pnpm `11.7.0`；Playwright `1.63.0`；构建日志 Vite `8.3.2`。使用已下载的 Playwright Firefox：
 
 ```text
-/Users/mt/Library/Caches/ms-playwright/firefox-1543/firefox/Nightly.app/Contents/MacOS/firefox
+~/Library/Caches/ms-playwright/firefox-1543/firefox/Nightly.app/Contents/MacOS/firefox
 ```
 
 本次按用户指定的 `import { firefox } from '@playwright/test'` 驱动下载版 Firefox；没有把 `/Applications/Firefox.app` 另行验收为通过。崩溃记录标记下载版版本为 155.0，尚未得到运行中的 `browser.version()` 回应。
@@ -60,7 +60,7 @@ Firefox 在创建浏览器页面之前即 `SIGABRT` 退出。已按任务说明�
 两次均已设置：
 
 ```text
-CFFIXED_USER_HOME=/Users/mt/work/project/github/mdgraph/.worktrees/codex-accept/test-results/cf-home
+CFFIXED_USER_HOME=<repo>/.worktrees/codex-accept/test-results/cf-home
 ```
 
 对应目录已创建。本次错误不同于已知的 `Could not find profile folder`。第一份 macOS 崩溃记录的主线程包含：
