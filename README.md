@@ -4,8 +4,10 @@ mdgraph 是一个纯前端、可离线、只面向 Firefox 的 Logseq 式 Markdo
 
 ## 构建与运行
 
+使用 Node.js 24 与 `package.json` 的 `packageManager` 指定的 pnpm 版本（11.7.0）。
+
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 pnpm preview          # 固定监听 http://localhost:4173（端口被占用会直接报错，不会换端口）
 ```
@@ -65,6 +67,12 @@ MDGRAPH_REAL_GRAPH=/path/to/your/graph pnpm test
 e2e 覆盖验收 1–7（首屏与存储提示、导入结果、零外部请求、未改动导出逐字节一致、编辑后仅改动导出只有一行 diff、刷新后数据仍在、虚拟页反链与跳转）以及编辑器键盘行为。
 
 **macOS 27 上的 Firefox 限制**：从终端或 agent 启动 Firefox 会因 TCC 保护 `~/Library/Application Support/Firefox` 而报 `Could not find profile folder` 并退出。`playwright.config.ts` 已在启动前把 `CFFIXED_USER_HOME` 指向可写目录 `test-results/cf-home`，所以 `pnpm e2e` 一条命令即可运行；如需自行指定，可预先设置该环境变量。手动在终端启动 Playwright 的 Firefox 时也需要同样设置。
+
+### GitHub Actions CI
+
+[CI 工作流](.github/workflows/ci.yml) 在面向 `main` 的 PR、`main` 推送及手动触发时运行，检查名称为 `Quality and Firefox`。它使用 Ubuntu 24.04、Node.js 24 和上述 pnpm 版本，按锁文件安装依赖并缓存 pnpm store，依次运行 lint、API/离线约束检查、单元测试、TypeScript/Vite 构建与 Firefox e2e。构建由现有 Playwright `webServer` 执行一次，单元测试与 e2e 均拒绝遗留的 `.only`。
+
+同一分支或 PR 的新运行会取消旧运行，单次 job 最长 15 分钟。e2e 的 HTML 报告及失败 trace 作为 `firefox-results` artifact 保留 7 天，可在对应 Actions 运行页面下载。CI 只使用仓库内的合成语料；依赖 `MDGRAPH_REAL_GRAPH` 的本机真实语料测试会按设计跳过。工作流不需要配置 secrets。
 
 ## 已知限制
 
