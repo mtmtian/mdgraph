@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parse } from '../../src/parser/parse';
 import { extractInline, isUuid, parseProperty, parseTask } from '../../src/parser/syntax';
-import { FIXTURES, GRAPH_DIR, readText, simplifyDoc, type Simplified } from './helpers/parser';
+import { FIXTURES, GRAPH_DIR, readText, simplifyDoc } from './helpers/parser';
 
 interface Expected {
   indentUnit?: string;
