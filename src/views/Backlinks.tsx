@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { nameFromPath } from '../index/pageName';
-import type { Backlink, PageEntry } from '../index/types';
+import type { Backlink } from '../index/types';
 import type { Block } from '../parser/types';
 import { editableTextOf } from '../store/types';
 import { useWorkspace } from '../store/workspace';
@@ -73,9 +73,6 @@ export default function Backlinks({
     const doc = path === null ? undefined : docs.get(path);
     if (doc) for (const b of persistentBlocks(doc.blocks)) all.push(...index.backlinksForBlock(b.id));
 
-    const byPath = new Map<string, PageEntry>();
-    for (const p of index.state.pages.values()) if (p.path !== null) byPath.set(p.path, p);
-
     const seen = new Set<string>();
     const map = new Map<string, Group>();
     for (const bl of all) {
@@ -84,7 +81,7 @@ export default function Backlinks({
       const id = `${src}\u0000${bl.source.block.id}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      const entry = byPath.get(src);
+      const entry = index.pageOfPath(src);
       const group = map.get(src) ?? { path: src, name: entry?.name ?? nameFromPath(src), pageKey: entry?.key ?? nameFromPath(src), items: [] };
       group.items.push(bl);
       map.set(src, group);

@@ -38,10 +38,17 @@ export interface FileStore {
   putMany(records: FileRecord[]): Promise<void>;
   /** Overwrite `text` only; leaves importedText untouched. */
   updateText(path: string, text: string, updatedAt: number): Promise<void>;
-  /** After a successful export: importedText = text for the given paths. */
-  markExported(paths: string[]): Promise<void>;
-  /** Drop every record and meta (used before a fresh import). */
-  clear(): Promise<void>;
+  /**
+   * After a successful export: importedText = the exported text (not whatever
+   * is stored now, so edits made while the download was pending stay dirty).
+   * Unknown paths are ignored.
+   */
+  markExported(files: Array<{ path: string; text: string }>): Promise<void>;
+  /**
+   * Replace the whole workspace (all records + meta) in ONE transaction: it
+   * either fully lands or leaves the previous contents untouched.
+   */
+  replaceAll(records: FileRecord[], meta: WorkspaceMeta): Promise<void>;
 }
 
 /** Output of the fs/import layer, independent of DOM File objects so it is unit-testable. */
@@ -49,6 +56,14 @@ export interface ImportedFile {
   /** Relative path with the chosen root folder stripped, '/'-separated, e.g. "pages/a.md". */
   path: string;
   text: string;
+}
+
+/**
+ * What the fs/import layer hands to the store. `failed` lists the paths that
+ * could not be read so far (live; grows while iterating).
+ */
+export interface ImportedFileStream extends AsyncIterable<ImportedFile> {
+  readonly failed?: readonly string[];
 }
 
 export interface ImportProgress {

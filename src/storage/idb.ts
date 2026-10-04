@@ -137,24 +137,35 @@ export function createFileStore(dbName = 'mdgraph'): FileStore {
       await finished;
     },
 
-    async markExported(paths) {
+    async markExported(files) {
       const d = await db();
       const tx = d.transaction(FILES, 'readwrite');
       const s = tx.objectStore(FILES);
       const finished = done(tx);
-      for (const p of paths) {
-        const rec = await req<FileRecord | undefined>(s.get(p));
-        if (rec) s.put({ ...rec, importedText: rec.text });
+      for (const f of files) {
+        const rec = await req<FileRecord | undefined>(s.get(f.path));
+        if (rec) s.put({ ...rec, importedText: f.text });
       }
       await finished;
     },
 
-    async clear() {
+    async replaceAll(records, meta) {
       const d = await db();
       const tx = d.transaction([FILES, META], 'readwrite');
-      tx.objectStore(FILES).clear();
-      tx.objectStore(META).clear();
-      await done(tx);
+      const finished = done(tx);
+      try {
+        const files = tx.objectStore(FILES);
+        files.clear();
+        tx.objectStore(META).clear();
+        for (const r of records) files.put(r);
+        tx.objectStore(META).put(meta);
+      } catch (e) {
+        // A synchronous put failure (e.g. DataCloneError) must roll the clear() back too.
+        tx.abort();
+        await finished.catch(() => undefined);
+        throw e;
+      }
+      await finished;
     },
   };
 }

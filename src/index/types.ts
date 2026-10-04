@@ -60,15 +60,16 @@ export interface IndexApi {
   /** Drop everything and index all docs. The "全量重建" fallback. */
   rebuildAll(docs: Iterable<Document>): void;
   resolvePage(nameOrKey: string): PageEntry | undefined;
+  /** The page a file backs (its own entry, even when another file wins the key); undefined for unknown paths. */
+  pageOfPath(path: string): PageEntry | undefined;
+  /**
+   * Persistent block ids (`id::`) that appear in more than one file. The first
+   * file indexed owns the id in `state.blocks` / `state.search`; the rest are
+   * conflicts. Sorted by id, paths in indexing order.
+   */
+  duplicateIds(): Array<{ id: string; paths: string[] }>;
   backlinksForPage(key: PageKey): Backlink[];
   backlinksForBlock(blockId: string): Backlink[];
   search(query: string, limit?: number): SearchHit[];
   readonly state: Indexes;
-}
-
-/** Page-name helpers shared by index and views (implemented in index/pageName.ts). */
-export interface PageNameApi {
-  /** "pages/a%2Fb.md" -> "a/b"; "pages/a___b.md" -> "a/b"; "journals/2022_06_25.md" -> "Jun 25th, 2022". */
-  nameFromPath(path: string): string;
-  toKey(name: string): PageKey;
 }

@@ -1,7 +1,8 @@
-import type { ImportedFile, ImportProgress } from '../storage/types.ts';
+import type { ImportedFile, ImportedFileStream, ImportProgress } from '../storage/types.ts';
 
 export interface ImportSource {
-  files: AsyncIterable<ImportedFile>;
+  /** Carries the live list of unreadable paths in `failed`. */
+  files: ImportedFileStream;
   total: number;
   rootName: string;
   /** Original relative paths that were filtered out (not .md, hidden, logseq/, bak, .recycle). */
@@ -75,14 +76,26 @@ async function readText(file: File): Promise<string> {
 
 const yieldToMain = () => new Promise<void>((r) => setTimeout(r, 0));
 
-/** Read files `batchSize` at a time, yielding to the main thread between batches. Never throws on a single bad file. */
-export async function* readInBatches(
+/**
+ * Read files `batchSize` at a time, yielding to the main thread between batches. Never throws on
+ * a single bad file; the stream's `failed` property lists the paths that could not be read.
+ */
+export function readInBatches(
   kept: Array<{ path: string; file: File }>,
   onProgress?: (p: ImportProgress) => void,
   batchSize = DEFAULT_BATCH,
-): AsyncIterable<ImportedFile> {
-  const total = kept.length;
+): ImportedFileStream {
   const failed: string[] = [];
+  return Object.assign(readBatches(kept, failed, onProgress, batchSize), { failed });
+}
+
+async function* readBatches(
+  kept: Array<{ path: string; file: File }>,
+  failed: string[],
+  onProgress: ((p: ImportProgress) => void) | undefined,
+  batchSize: number,
+): AsyncGenerator<ImportedFile> {
+  const total = kept.length;
   const size = Math.max(1, Math.floor(batchSize));
   for (let i = 0; i < total; i += size) {
     const batch = kept.slice(i, i + size);

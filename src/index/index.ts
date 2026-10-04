@@ -11,9 +11,21 @@ interface Contribution {
   linkKeys: string[];
   /** Block uuids (lower-cased) this document references. */
   refIds: string[];
-  searchPairs: Array<[token: string, blockId: string]>;
   /** The real page this file backs. */
-  file: { key: PageKey; aliases: PageKey[] };
+  entry: PageEntry;
+}
+
+/**
+ * One file's claim on a block id. Persistent ids can repeat across files; the
+ * first holder is the owner shown in `state.blocks` / `state.search`, and when
+ * it goes away the next holder takes over.
+ */
+interface Holder {
+  path: string;
+  loc: BlockLocation;
+  /** Position inside its document, for stable search ordering. */
+  seq: number;
+  tokens: string[];
 }
 
 function pushTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
@@ -30,12 +42,6 @@ function removeFrom<K, V>(map: Map<K, V[]>, key: K, drop: (v: V) => boolean): vo
   else if (kept.length !== list.length) map.set(key, kept);
 }
 
-/** Decide which syntax produced a link, falling back to 'link' when it cannot be told apart. */
-function viaOf(block: Block, contentLinks: Set<string> | null, contentTags: Set<string> | null, link: string): Backlink['via'] {
-  if (contentLinks && !contentLinks.has(link)) return 'property';
-  if (contentTags ? contentTags.has(link) : block.tags.includes(link)) return 'tag';
-  return 'link';
-}
 
 export function createIndex(): IndexApi {
   const state: Indexes = {
@@ -45,20 +51,39 @@ export function createIndex(): IndexApi {
     blockBacklinks: new Map(),
     search: new Map(),
   };
-  /** Position of a block inside its document, for stable search ordering. */
-  const order = new Map<string, number>();
+  const holders = new Map<string, Holder[]>();
   const contributions = new Map<string, Contribution>();
-  /** Real pages backed by a file, by path. */
-  const fileEntries = new Map<string, PageEntry>();
   const keyToPaths = new Map<PageKey, string[]>();
   const aliasToPaths = new Map<PageKey, string[]>();
   /** Original spellings of referenced page names, in first-seen order, with the referencing path. */
   const refNames = new Map<PageKey, Array<{ path: string; name: string }>>();
 
+  const entryOf = (path: string): PageEntry | undefined => contributions.get(path)?.entry;
+
+  function activate(id: string, h: Holder): void {
+    state.blocks.set(id, h.loc);
+    for (const token of h.tokens) {
+      let ids = state.search.get(token);
+      if (!ids) state.search.set(token, (ids = new Set()));
+      ids.add(id);
+    }
+  }
+
+  function deactivate(id: string, h: Holder): void {
+    state.blocks.delete(id);
+    for (const token of h.tokens) {
+      const ids = state.search.get(token);
+      if (!ids) continue;
+      ids.delete(id);
+      if (ids.size === 0) state.search.delete(token);
+    }
+  }
+
   function recomputePage(key: PageKey): void {
-    const owners = keyToPaths.get(key);
-    if (owners && owners.length > 0) {
-      state.pages.set(key, fileEntries.get(owners[0])!);
+    const owner = keyToPaths.get(key)?.[0];
+    const entry = owner === undefined ? undefined : entryOf(owner);
+    if (entry) {
+      state.pages.set(key, entry);
       return;
     }
     if (aliasToPaths.has(key)) {
@@ -81,16 +106,15 @@ export function createIndex(): IndexApi {
     if (!c) return;
     contributions.delete(path);
     for (const id of c.blockIds) {
-      if (state.blocks.get(id)?.path === path) {
-        state.blocks.delete(id);
-        order.delete(id);
+      const list = holders.get(id);
+      const at = list ? list.findIndex((h) => h.path === path) : -1;
+      if (!list || at < 0) continue;
+      const [gone] = list.splice(at, 1);
+      if (at === 0) {
+        deactivate(id, gone);
+        if (list.length > 0) activate(id, list[0]);
       }
-    }
-    for (const [token, id] of c.searchPairs) {
-      const ids = state.search.get(token);
-      if (!ids) continue;
-      ids.delete(id);
-      if (ids.size === 0) state.search.delete(token);
+      if (list.length === 0) holders.delete(id);
     }
     const fromPath = (b: Backlink) => b.source.path === path;
     for (const key of c.linkKeys) {
@@ -99,11 +123,10 @@ export function createIndex(): IndexApi {
     }
     for (const id of c.refIds) removeFrom(state.blockBacklinks, id, fromPath);
 
-    removeFrom(keyToPaths, c.file.key, (p) => p === path);
-    for (const a of c.file.aliases) removeFrom(aliasToPaths, a, (p) => p === path);
-    fileEntries.delete(path);
+    removeFrom(keyToPaths, c.entry.key, (p) => p === path);
+    for (const a of c.entry.aliases) removeFrom(aliasToPaths, a, (p) => p === path);
 
-    for (const key of new Set([...c.linkKeys, c.file.key, ...c.file.aliases])) recomputePage(key);
+    for (const key of new Set([...c.linkKeys, c.entry.key, ...c.entry.aliases])) recomputePage(key);
   }
 
   function addDocument(doc: Document): void {
@@ -114,11 +137,11 @@ export function createIndex(): IndexApi {
     const key = toKey(name);
     const aliases = toKey(derived) !== key ? [toKey(derived)] : [];
     const entry: PageEntry = { key, name, path, aliases };
-    fileEntries.set(path, entry);
     pushTo(keyToPaths, key, path);
     for (const a of aliases) pushTo(aliasToPaths, a, path);
 
-    const c: Contribution = { blockIds: [], linkKeys: [], refIds: [], searchPairs: [], file: { key, aliases } };
+    const c: Contribution = { blockIds: [], linkKeys: [], refIds: [], entry };
+    contributions.set(path, c);
     const linkKeys = new Set<string>();
     const refIds = new Set<string>();
     let seq = 0;
@@ -126,30 +149,29 @@ export function createIndex(): IndexApi {
     const visit = (blocks: Block[], ancestors: Block[]): void => {
       for (const block of blocks) {
         const loc: BlockLocation = { path, block, ancestors };
-        state.blocks.set(block.id, loc);
-        order.set(block.id, seq++);
-        c.blockIds.push(block.id);
-
-        // search
-        for (const token of new Set(tokenize(searchTextOf(block)))) {
-          let ids = state.search.get(token);
-          if (!ids) state.search.set(token, (ids = new Set()));
-          ids.add(block.id);
-          c.searchPairs.push([token, block.id]);
+        const holder: Holder = { path, loc, seq: seq++, tokens: [...new Set(tokenize(searchTextOf(block)))] };
+        const list = holders.get(block.id);
+        if (list) list.push(holder);
+        else {
+          holders.set(block.id, [holder]);
+          activate(block.id, holder);
         }
+        c.blockIds.push(block.id);
 
         // page references
         if (block.links.length > 0) {
-          const hasProps = block.properties.some((p) => p.key !== 'id');
-          const inline = hasProps ? extractInline(block.content) : null;
-          const contentLinks = inline ? new Set(inline.links) : null;
-          const contentTags = inline ? new Set(inline.tags) : null;
+          // Without property lines every link comes from the content; otherwise re-extract
+          // from the content alone so links found only in properties are told apart.
+          const src = block.properties.some((p) => p.key !== 'id') ? extractInline(block.content) : block;
+          const contentLinks = new Set(src.links);
+          const contentTags = new Set(src.tags);
           const seen = new Set<string>();
           for (const link of block.links) {
             const target = toKey(link);
             if (!target || seen.has(target)) continue;
             seen.add(target);
-            pushTo(state.pageBacklinks, target, { source: loc, via: viaOf(block, contentLinks, contentTags, link) });
+            const via = !contentLinks.has(link) ? 'property' : contentTags.has(link) ? 'tag' : 'link';
+            pushTo(state.pageBacklinks, target, { source: loc, via });
             pushTo(refNames, target, { path, name: link.trim() });
             linkKeys.add(target);
           }
@@ -168,7 +190,6 @@ export function createIndex(): IndexApi {
     visit(doc.blocks, []);
     c.linkKeys = [...linkKeys];
     c.refIds = [...refIds];
-    contributions.set(path, c);
 
     for (const k of new Set([...c.linkKeys, key, ...aliases])) recomputePage(k);
   }
@@ -183,7 +204,15 @@ export function createIndex(): IndexApi {
     const direct = state.pages.get(key);
     if (direct) return direct;
     const owner = aliasToPaths.get(key)?.[0];
-    return owner === undefined ? undefined : fileEntries.get(owner);
+    return owner === undefined ? undefined : entryOf(owner);
+  }
+
+  function duplicateIds(): Array<{ id: string; paths: string[] }> {
+    const out: Array<{ id: string; paths: string[] }> = [];
+    for (const [id, list] of holders) {
+      if (list.length > 1) out.push({ id, paths: [...new Set(list.map((h) => h.path))] });
+    }
+    return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   function backlinksForPage(nameOrKey: string): Backlink[] {
@@ -226,7 +255,7 @@ export function createIndex(): IndexApi {
       (a, b) =>
         b.score - a.score ||
         (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) ||
-        (order.get(a.blockId) ?? 0) - (order.get(b.blockId) ?? 0),
+        (holders.get(a.blockId)?.[0].seq ?? 0) - (holders.get(b.blockId)?.[0].seq ?? 0),
     );
     return hits.slice(0, limit);
   }
@@ -240,8 +269,7 @@ export function createIndex(): IndexApi {
       state.pageBacklinks.clear();
       state.blockBacklinks.clear();
       state.search.clear();
-      order.clear();
-      fileEntries.clear();
+      holders.clear();
       keyToPaths.clear();
       aliasToPaths.clear();
       refNames.clear();
@@ -249,6 +277,8 @@ export function createIndex(): IndexApi {
       for (const doc of docs) upsertDocument(doc);
     },
     resolvePage,
+    pageOfPath: entryOf,
+    duplicateIds,
     backlinksForPage,
     backlinksForBlock: (blockId) => state.blockBacklinks.get(blockId.toLowerCase()) ?? [],
     search,

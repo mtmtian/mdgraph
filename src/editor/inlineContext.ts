@@ -1,4 +1,3 @@
-import { toKey } from '../index/pageName';
 import type { WorkspaceStore } from '../store/workspace';
 import type { InlineContext } from './inline';
 
@@ -18,12 +17,8 @@ export function makeInlineContext(store: WorkspaceStore): InlineContext {
       const s = store.getState();
       const loc = s.index.state.blocks.get(uuid);
       if (!loc) return;
-      for (const p of s.index.state.pages.values()) {
-        if (p.path === loc.path) {
-          s.openPage(p.key || toKey(p.name));
-          break;
-        }
-      }
+      const page = s.index.pageOfPath(loc.path);
+      if (page) s.openPage(page.key);
       setTimeout(() => document.getElementById(uuid)?.scrollIntoView?.({ block: 'center' }), 0);
     },
   };

@@ -137,3 +137,65 @@ describe('virtual page upgrade', () => {
     expect(labels(index.backlinksForPage('orig'))).toHaveLength(2);
   });
 });
+
+describe('same persistent id in several files', () => {
+  const ID = '22222222-2222-4222-8222-222222222222';
+  const make = () => {
+    const index = createIndex();
+    index.upsertDocument(parse('a.md', `- alpha apple\n  id:: ${ID}`));
+    index.upsertDocument(parse('b.md', `- beta banana\n  id:: ${ID}\n- other [[X]] ((${ID}))`));
+    return index;
+  };
+
+  test('first file owns the id; the clash is reported', () => {
+    const index = make();
+    expect(index.state.blocks.get(ID)?.path).toBe('a.md');
+    expect(index.duplicateIds()).toEqual([{ id: ID, paths: ['a.md', 'b.md'] }]);
+    expect(index.search('apple').map((h) => h.path)).toEqual(['a.md']);
+    expect(index.search('banana')).toEqual([]); // the loser is not indexed under the shared id
+  });
+
+  test('removing the loser leaves the owner untouched and clears the conflict', () => {
+    const index = make();
+    const owner = index.state.blocks.get(ID);
+    index.removeDocument('b.md');
+    expect(index.state.blocks.get(ID)).toBe(owner);
+    expect(index.search('apple').map((h) => h.blockId)).toEqual([ID]);
+    expect(index.duplicateIds()).toEqual([]);
+  });
+
+  test('removing the owner hands the id (blocks + search) to the other file', () => {
+    const index = make();
+    index.removeDocument('a.md');
+    expect(index.state.blocks.get(ID)?.path).toBe('b.md');
+    expect(index.search('banana').map((h) => h.path)).toEqual(['b.md']);
+    expect(index.search('apple')).toEqual([]);
+    expect(index.duplicateIds()).toEqual([]);
+    index.removeDocument('b.md');
+    expect(index.state.blocks.has(ID)).toBe(false);
+    expect(index.state.search.size).toBe(0);
+  });
+
+  test('re-upserting the owner queues it behind the other holder', () => {
+    const index = make();
+    index.upsertDocument(parse('a.md', `- alpha apple edited\n  id:: ${ID}`));
+    // a.md was removed (b.md promoted) then re-added as the second holder.
+    expect(index.state.blocks.get(ID)?.path).toBe('b.md');
+    expect(index.duplicateIds()).toEqual([{ id: ID, paths: ['b.md', 'a.md'] }]);
+  });
+});
+
+describe('pageOfPath', () => {
+  test('returns the page a file backs, its own entry even when another file wins the key', () => {
+    const index = createIndex();
+    index.upsertDocument(parse('pages/Same.md', '- one'));
+    index.upsertDocument(parse('pages/same.md', '- two'));
+    expect(index.pageOfPath('pages/Same.md')).toMatchObject({ key: 'same', path: 'pages/Same.md' });
+    expect(index.pageOfPath('pages/same.md')).toMatchObject({ key: 'same', path: 'pages/same.md' });
+    expect(index.state.pages.get('same')?.path).toBe('pages/Same.md');
+    expect(index.pageOfPath('nope.md')).toBeUndefined();
+    index.removeDocument('pages/Same.md');
+    expect(index.pageOfPath('pages/Same.md')).toBeUndefined();
+    expect(index.state.pages.get('same')?.path).toBe('pages/same.md');
+  });
+});
