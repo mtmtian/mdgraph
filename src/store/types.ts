@@ -65,9 +65,17 @@ export interface WorkspaceState {
   exportFile(path: string): Promise<void>;
 }
 
-/** Text shown in the editor textarea for a block (content + property lines except id). */
+/**
+ * Text shown in the editor textarea for a block (content + property lines
+ * except id). Mirrors the order parser/ops.setBlockText expects back:
+ *  - bullet: head line, property lines, remaining content lines (PLAN §3.3)
+ *  - raw:    property lines first, then content (PLAN §3.3 raw rule)
+ */
 export function editableTextOf(block: Block): string {
-  const lines = block.content.split('\n');
   const props = block.properties.filter((p) => p.key !== 'id').map((p) => `${p.key}:: ${p.value}`);
+  if (block.kind === 'raw') {
+    return block.content === '' && props.length > 0 ? props.join('\n') : [...props, block.content].join('\n');
+  }
+  const lines = block.content.split('\n');
   return [lines[0] ?? '', ...props, ...lines.slice(1)].join('\n');
 }
