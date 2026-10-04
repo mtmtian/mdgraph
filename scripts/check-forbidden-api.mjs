@@ -13,6 +13,7 @@ const FORBIDDEN = [
   { re: /https?:\/\/(?!localhost|127\.0\.0\.1)[^\s'"`)]+\.(?:js|css|woff2?|ttf|otf|png|svg|json)\b/, why: 'remote asset URL' },
   { re: /fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com/, why: 'CDN / web font' },
   { re: /\bfetch\(|new XMLHttpRequest|navigator\.sendBeacon|new WebSocket\(|new EventSource\(/, why: 'runtime network call' },
+  { re: /\b(?:src|href)\s*=\s*["']https?:\/\/(?!localhost|127\.0\.0\.1)/, why: 'remote src/href in markup' },
   { re: /@import\s+url\(\s*['"]?https?:/, why: 'remote CSS import' },
 ];
 
