@@ -47,7 +47,7 @@ export default function BlockEditor({ path, block, store, editing, focusRequest,
         }
       }}
     >
-      {text === '' ? ' ' : renderInline(text, inline)}
+      {text === '' ? ' ' : renderInline(text, inline, { task: block.kind === 'bullet' })}
     </div>
   );
 }

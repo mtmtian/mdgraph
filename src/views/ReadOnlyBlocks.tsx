@@ -25,7 +25,7 @@ export function BlockTree({ blocks, baseDepth = 0, withIds = false, store }: Tre
             style={{ paddingLeft: `${Math.max(0, b.depth - baseDepth) * 1.25}rem` }}
           >
             {b.kind === 'bullet' && <span className="ro-bullet" aria-hidden="true">•</span>}
-            <BlockText text={editableTextOf(b)} store={store} />
+            <BlockText text={editableTextOf(b)} task={b.kind === 'bullet'} store={store} />
           </div>
           {b.children.length > 0 && <BlockTree blocks={b.children} baseDepth={baseDepth} withIds={withIds} store={store} />}
         </div>

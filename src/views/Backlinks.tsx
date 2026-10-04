@@ -151,7 +151,7 @@ function BacklinkItem({
       <span className="bl-via">{bl.via}</span>
       {/* Mouse convenience only; the breadcrumb button is the keyboard-accessible jump. */}
       <div className="bl-text" onClick={onJump}>
-        <BlockText text={editableTextOf(block)} store={store} />
+        <BlockText text={editableTextOf(block)} task={block.kind === 'bullet'} store={store} />
       </div>
       {childCount > 0 && (
         <div className="bl-children">

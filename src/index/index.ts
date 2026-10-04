@@ -1,4 +1,4 @@
-import { extractInline } from '../parser/syntax';
+import { bodyOf, extractInline } from '../parser/syntax';
 import type { Block, Document } from '../parser/types';
 import { nameFromPath, titleOf, toKey } from './pageName';
 import { searchTextOf, tokenize } from './searchIndex';
@@ -162,7 +162,7 @@ export function createIndex(): IndexApi {
         if (block.links.length > 0) {
           // Without property lines every link comes from the content; otherwise re-extract
           // from the content alone so links found only in properties are told apart.
-          const src = block.properties.some((p) => p.key !== 'id') ? extractInline(block.content) : block;
+          const src = block.properties.some((p) => p.key !== 'id') ? extractInline(bodyOf(block)) : block;
           const contentLinks = new Set(src.links);
           const contentTags = new Set(src.tags);
           const seen = new Set<string>();
