@@ -16,14 +16,17 @@ import type { Block, BlockRef, Document, Property } from './types';
 // ---------------------------------------------------------------------------
 // lookup
 
+// All tree traversals below use explicit stacks: outline depth is unbounded
+// (PLAN 3.5 round-trips any input), the call stack is not.
+
 export function* walk(doc: Document): Iterable<BlockRef> {
-  function* visit(blocks: Block[], parent: Block | null): Iterable<BlockRef> {
-    for (const block of blocks) {
-      yield { path: doc.path, block, parent };
-      yield* visit(block.children, block);
-    }
+  const stack: { block: Block; parent: Block | null }[] = [];
+  for (let i = doc.blocks.length - 1; i >= 0; i--) stack.push({ block: doc.blocks[i], parent: null });
+  while (stack.length > 0) {
+    const { block, parent } = stack.pop()!;
+    yield { path: doc.path, block, parent };
+    for (let i = block.children.length - 1; i >= 0; i--) stack.push({ block: block.children[i], parent: block });
   }
-  yield* visit(doc.blocks, null);
 }
 
 export function findBlock(doc: Document, id: string): BlockRef | null {
@@ -33,10 +36,26 @@ export function findBlock(doc: Document, id: string): BlockRef | null {
 
 /** Index path from doc.blocks down to the block, or null. */
 function pathOf(blocks: Block[], id: string): number[] | null {
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].id === id) return [i];
-    const sub = pathOf(blocks[i].children, id);
-    if (sub) return [i, ...sub];
+  const lists: Block[][] = [blocks];
+  const idx: number[] = [0];
+  while (lists.length > 0) {
+    const top = lists.length - 1;
+    const list = lists[top];
+    const k = idx[top];
+    if (k >= list.length) {
+      lists.pop();
+      idx.pop();
+      if (idx.length > 0) idx[idx.length - 1]++;
+      continue;
+    }
+    const b = list[k];
+    if (b.id === id) return idx.slice();
+    if (b.children.length > 0) {
+      lists.push(b.children);
+      idx.push(0);
+    } else {
+      idx[top] = k + 1;
+    }
   }
   return null;
 }
@@ -57,11 +76,16 @@ function modifySiblings(
   path: number[],
   fn: (siblings: Block[], index: number) => Block[],
 ): Block[] {
-  if (path.length === 1) return fn(blocks, path[0]);
-  const [i, ...rest] = path;
-  const b = blocks[i];
-  const children = modifySiblings(b.children, rest, fn);
-  return [...blocks.slice(0, i), { ...b, children }, ...blocks.slice(i + 1)];
+  const levels: Block[][] = [blocks];
+  for (let j = 0; j < path.length - 1; j++) levels.push(levels[j][path[j]].children);
+  const last = path.length - 1;
+  let list = fn(levels[last], path[last]);
+  for (let j = last - 1; j >= 0; j--) {
+    const sibs = levels[j];
+    const b = sibs[path[j]];
+    list = [...sibs.slice(0, path[j]), { ...b, children: list }, ...sibs.slice(path[j] + 1)];
+  }
+  return list;
 }
 
 function withBlocks(doc: Document, blocks: Block[]): Document {
@@ -99,15 +123,33 @@ function shiftLines(lines: string[], delta: number, unit: string): string[] | nu
  */
 function shiftBlock(block: Block, delta: number, unit: string, regenerate: boolean): Block {
   if (delta === 0 && !regenerate) return block;
-  let rawLines = block.rawLines;
-  if (regenerate) rawLines = null;
-  else if (rawLines !== null && block.kind === 'bullet') rawLines = shiftLines(rawLines, delta, unit);
-  return {
-    ...block,
-    depth: block.kind === 'bullet' ? block.depth + delta : block.depth,
-    rawLines,
-    children: block.children.map((c) => shiftBlock(c, delta, unit, false)),
+  const shiftSelf = (b: Block, regen: boolean, children: Block[]): Block => {
+    let rawLines = b.rawLines;
+    if (regen) rawLines = null;
+    else if (rawLines !== null && b.kind === 'bullet') rawLines = shiftLines(rawLines, delta, unit);
+    return { ...b, depth: b.kind === 'bullet' ? b.depth + delta : b.depth, rawLines, children };
   };
+  if (delta === 0) return shiftSelf(block, regenerate, block.children);
+
+  interface Frame {
+    block: Block;
+    regen: boolean;
+    done: Block[];
+  }
+  const stack: Frame[] = [{ block, regen: regenerate, done: [] }];
+  let result = block;
+  while (stack.length > 0) {
+    const f = stack[stack.length - 1];
+    if (f.done.length < f.block.children.length) {
+      stack.push({ block: f.block.children[f.done.length], regen: false, done: [] });
+      continue;
+    }
+    stack.pop();
+    const out = shiftSelf(f.block, f.regen, f.done);
+    if (stack.length > 0) stack[stack.length - 1].done.push(out);
+    else result = out;
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +169,7 @@ export function setBlockText(doc: Document, id: string, editableText: string): D
   const path = pathOf(doc.blocks, id);
   if (!path) return doc;
   const block = blockAt(doc, path);
-  const lines = editableText.replace(/\r\n?/g, '\n').split('\n');
+  const lines = editableText.replace(/\r\n/g, '\n').split('\n');
   const parsed =
     block.kind === 'raw'
       ? splitRawBody(lines)
@@ -249,12 +291,18 @@ export function outdent(doc: Document, id: string): Document {
 // ---------------------------------------------------------------------------
 // mergeWithPrevious
 
-function flatten(blocks: Block[], prefix: number[], out: { path: number[]; block: Block }[]): void {
-  blocks.forEach((block, i) => {
-    const path = [...prefix, i];
-    out.push({ path, block });
-    flatten(block.children, path, out);
-  });
+function flatten(blocks: Block[]): { path: number[]; block: Block }[] {
+  const out: { path: number[]; block: Block }[] = [];
+  const stack: { path: number[]; block: Block }[] = [];
+  for (let i = blocks.length - 1; i >= 0; i--) stack.push({ path: [i], block: blocks[i] });
+  while (stack.length > 0) {
+    const e = stack.pop()!;
+    out.push(e);
+    for (let i = e.block.children.length - 1; i >= 0; i--) {
+      stack.push({ path: [...e.path, i], block: e.block.children[i] });
+    }
+  }
+  return out;
 }
 
 /**
@@ -267,8 +315,7 @@ export function mergeWithPrevious(
   doc: Document,
   id: string,
 ): { doc: Document; blockId: string; caret: number } | null {
-  const flat: { path: number[]; block: Block }[] = [];
-  flatten(doc.blocks, [], flat);
+  const flat = flatten(doc.blocks);
   const at = flat.findIndex((e) => e.block.id === id);
   if (at <= 0) return null;
   const target = flat[at];

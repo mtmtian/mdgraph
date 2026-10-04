@@ -62,12 +62,24 @@ type InlineKind = 'link' | 'tag' | 'ref';
 interface InlineItem {
   kind: InlineKind;
   value: string;
+  /** true for the `#[[multi word]]` form of a tag */
+  bracketed?: boolean;
 }
+
+// Masked spans (inline code, link destinations, bare URLs) are overwritten with
+// a same-length run of NUL: it is not whitespace, so masking can neither create
+// a `#`/`[[` boundary nor join two tokens, and the patterns below never match it.
+const MASK = '\u0000';
+const CODE_RE = /`[^`]*`/g;
+const MD_LINK_URL_RE = /(?<=\])\([^)\s]*\)/g;
+const BARE_URL_RE = /https?:\/\/\S+/g;
+const mask = (m: string): string => MASK.repeat(m.length);
 
 // Alternatives, in priority order at a given position:
 //   1 #[[multi word]]   2 [[Page]] (innermost)   3 #tag   4 ((uuid))
 const INLINE_RE =
-  /(?<=^|\s)#\[\[([^[\]]+)\]\]|\[\[([^[\]]+)\]\]|(?<=^|\s)#(?![[#])([^\s#]*[^\s#,.;:!?)\]])|\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)\)/gi;
+  // oxlint-disable-next-line no-control-regex -- NUL is the mask character, see MASK
+  /(?<=^|\s)#\[\[([^[\]\u0000]+)\]\]|\[\[([^[\]\u0000]+)\]\]|(?<=^|\s)#(?![[#\u0000])([^\s#\u0000]*[^\s#,.;:!?)\]\u0000])|\(\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)\)/gi;
 
 function scanInline(text: string): InlineItem[] {
   const items: InlineItem[] = [];
@@ -82,10 +94,10 @@ function scanInline(text: string): InlineItem[] {
       fence = open;
       continue;
     }
-    const stripped = line.replace(/`[^`]*`/g, ' ');
+    const stripped = line.replace(CODE_RE, mask).replace(MD_LINK_URL_RE, mask).replace(BARE_URL_RE, mask);
     for (const m of stripped.matchAll(INLINE_RE)) {
       if (m[1] !== undefined) {
-        if (m[1].trim()) items.push({ kind: 'tag', value: m[1] });
+        if (m[1].trim()) items.push({ kind: 'tag', value: m[1], bracketed: true });
       } else if (m[2] !== undefined) {
         if (m[2].trim()) items.push({ kind: 'link', value: m[2] });
       } else if (m[3] !== undefined) {
@@ -136,7 +148,8 @@ export function extractInline(text: string): { links: string[]; tags: string[]; 
 }
 
 /** Split a `tags::` value on commas that are not inside [[ ]]. */
-function splitTagsValue(value: string): string[] {
+function splitTagsValue(rawValue: string): string[] {
+  const value = rawValue.replace(CODE_RE, '');
   const parts: string[] = [];
   let depth = 0;
   let cur = '';
@@ -184,7 +197,10 @@ export function deriveFields(kind: 'bullet' | 'raw', content: string, properties
     if (p.key.toLowerCase() === 'tags') {
       for (const t of splitTagsValue(p.value)) c.tag(t);
     } else {
-      for (const item of scanInline(p.value)) if (item.kind === 'link') c.link(item.value);
+      for (const item of scanInline(p.value)) {
+        if (item.kind === 'link') c.link(item.value);
+        else if (item.kind === 'tag' && item.bracketed) c.tag(item.value);
+      }
     }
   }
   return {

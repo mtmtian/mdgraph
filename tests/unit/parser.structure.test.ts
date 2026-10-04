@@ -121,10 +121,10 @@ describe('syntax helpers', () => {
     expect(extractInline('http://x.com/#anchor').tags).toEqual([]);
   });
 
-  it('extractInline: skips inline code and fenced lines, ignores markdown links and bare urls', () => {
+  it('extractInline: skips inline code and fenced lines, ignores markdown link destinations and bare urls', () => {
     const text = '`[[no]] #no` [[yes]]\n```\n[[fenced]] #fenced\n```\n[text](http://a.b/c#d) https://x.y/[[z]]';
     const r = extractInline(text);
-    expect(r.links).toEqual(['yes', 'z']);
+    expect(r.links).toEqual(['yes']);
     expect(r.tags).toEqual([]);
   });
 
