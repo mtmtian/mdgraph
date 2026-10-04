@@ -71,7 +71,24 @@ describe('parser adversarial review — PLAN §3', () => {
   });
 
   it('M03: only spaces and tabs are indentation; a fullwidth space is content (rule amended)', () => {
-    expect(p('- a\n  b\n\u3000c').blocks[0].content).toBe('a\nb\n\u3000c');
+    // The fullwidth-space line is not an indented continuation: it starts a raw run.
+    const doc = p('- a\n  b\n\u3000c');
+    expect(doc.blocks.map((b) => [b.kind, b.content])).toEqual([
+      ['bullet', 'a\nb'],
+      ['raw', '\u3000c'],
+    ]);
+    expect(p('- a\n\u3000- b').blocks.map((b) => b.kind)).toEqual(['bullet', 'raw']);
+    expect(p('\u3000- b').blocks.map((b) => b.kind)).toEqual(['raw']);
+  });
+
+  it('M03: a line holding only "\\r" is a raw line, not a blank continuation', () => {
+    // "\r" alone between two lines of an LF file: not blank, not indented.
+    const doc = p('- a\n\r\n  b');
+    expect(doc.blocks.map((b) => [b.kind, b.content])).toEqual([
+      ['bullet', 'a'],
+      ['raw', '\r\n  b'],
+    ]);
+    expect(p('- a\n \t \n  b').blocks.map((b) => [b.kind, b.content])).toEqual([['bullet', 'a\n \nb']]);
   });
 
   it('M04: lines split on LF only; a lone CR is an ordinary character (rule amended)', () => {

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parse } from '../../src/parser/parse';
 import { extractInline, isUuid, parseProperty, parseTask } from '../../src/parser/syntax';
-import { FIXTURES, GRAPH_DIR, readText, simplifyDoc } from './helpers/parser';
+import { FIXTURES, GRAPH_DIR, readText, simplifyDoc, type Simplified } from './helpers/parser';
 
 interface Expected {
   indentUnit?: string;
@@ -10,6 +10,19 @@ interface Expected {
   bom?: boolean;
   trailingNewline?: boolean;
   blocks: unknown[];
+}
+
+/**
+ * expected/*.json still describes a raw block's `content` the old way: WITHOUT
+ * its leading property lines (those were listed only under `properties`). The
+ * current model keeps every raw line in `content`, so compare through this
+ * conversion: drop as many leading lines as the block has properties. (Raw
+ * blocks are always top-level and childless.)
+ */
+function withLegacyRawContent(blocks: Simplified[]): Simplified[] {
+  return blocks.map((b) =>
+    b.kind === 'raw' ? { ...b, content: b.content.split('\n').slice(b.properties.length).join('\n') } : b,
+  );
 }
 
 function check(name: string): void {
@@ -20,7 +33,7 @@ function check(name: string): void {
     if (expected.eol !== undefined) expect(doc.eol).toBe(expected.eol);
     if (expected.bom !== undefined) expect(doc.bom).toBe(expected.bom);
     if (expected.trailingNewline !== undefined) expect(doc.trailingNewline).toBe(expected.trailingNewline);
-    expect(simplifyDoc(doc)).toEqual(expected.blocks);
+    expect(withLegacyRawContent(simplifyDoc(doc))).toEqual(expected.blocks);
   });
 }
 

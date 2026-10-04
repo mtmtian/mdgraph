@@ -41,12 +41,21 @@ export interface Block {
   /** 0 for top-level. Depth is derived from indentation / Document.indentUnit. */
   depth: number;
   /**
-   * Block body WITHOUT property lines, lines joined by '\n'. For bullet blocks
-   * the first line is the head line (text after the marker). Task keyword is
-   * kept inside content (e.g. "TODO buy milk"); `task` is derived from it.
+   * Block body, lines joined by '\n'.
+   *  - bullet: WITHOUT property lines; the first line is the head line (text
+   *    after the marker). Task keyword stays inside content ("TODO buy milk");
+   *    `task` is derived from it.
+   *  - raw: ALL lines of the raw run, property lines included (the run's lines
+   *    joined verbatim). `properties` is only read-only metadata derived from
+   *    the leading property lines; edit `content`, never `properties`, on a raw
+   *    block (serialize writes `content` alone).
    */
   content: string;
-  /** Ordered `key:: value` lines belonging to this block, including `id`. */
+  /**
+   * Ordered `key:: value` lines belonging to this block, including `id`. For a
+   * raw block these are the leading property lines of `content` (derived, see
+   * `content`).
+   */
   properties: Property[];
   task: TaskState;
   /** Page names referenced via [[Page]] or #tag / #[[tag]] (tags are also pages), de-duplicated, original casing. */
