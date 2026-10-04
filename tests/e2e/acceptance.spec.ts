@@ -156,6 +156,10 @@ test('9. 布局：bullet 块的文本列有可点击的宽度', async ({ page })
   await page.goto('/');
   await importGraph(page);
   await openPage(page, 'Basic Page');
-  const box = await firstBullet(page).locator('.block-view').boundingBox();
+  const view = firstBullet(page).locator('.block-view');
+  const box = await view.boundingBox();
   expect(box?.width ?? 0).toBeGreaterThan(200);
+  // A real mouse click on the text must enter edit mode (this is what the collapsed layout broke).
+  await view.click();
+  await expect(firstBullet(page).locator('textarea.block-input')).toBeVisible();
 });
