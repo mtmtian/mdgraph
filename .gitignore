@@ -30,3 +30,4 @@ coverage
 .env
 # never commit a copy of a personal graph
 fixtures/real/
+.worktrees/
