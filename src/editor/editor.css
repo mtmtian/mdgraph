@@ -1,7 +1,8 @@
 .outline { list-style: none; margin: 0; padding: 0; }
 .block { display: flex; align-items: flex-start; gap: 6px; padding-top: 2px; padding-bottom: 2px; }
-.block-bullet { flex: none; width: 1em; text-align: center; color: var(--muted); line-height: 1.5; user-select: none; }
-.block-raw .block-bullet { visibility: hidden; }
+/* `.block-bullet` / `.block-raw` are kind classes on the <li>; the dot glyph is `.block-dot`. */
+.block-dot { flex: none; width: 1em; text-align: center; color: var(--muted); line-height: 1.5; user-select: none; }
+.block-raw .block-dot { visibility: hidden; }
 
 .block-view, .block-edit { flex: 1; min-width: 0; }
 .block-view { white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.5em; cursor: text; border-radius: 3px; }

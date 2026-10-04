@@ -40,8 +40,8 @@ describe('Outline rendering', () => {
     expect(items().map((li) => li.id)).toEqual(blocks.map((b) => b.id));
     expect(items().map((li) => Number(li.dataset.depth))).toEqual([0, 0, 0, 1, 2, 0, 0]);
     expect(blocks[0].kind).toBe('raw');
-    expect(items()[0].querySelector('.block-bullet')!.textContent).toBe('');
-    expect(items()[1].querySelector('.block-bullet')!.textContent).toBe('•');
+    expect(items()[0].querySelector('.block-dot')!.textContent).toBe('');
+    expect(items()[1].querySelector('.block-dot')!.textContent).toBe('•');
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 

@@ -81,7 +81,7 @@ export default function Outline({ path, store: injected }: Props) {
           data-depth={b.depth}
           style={{ paddingLeft: `${b.depth * 1.5}rem` }}
         >
-          <span className="block-bullet" aria-hidden="true">{b.kind === 'bullet' ? '•' : ''}</span>
+          <span className="block-dot" aria-hidden="true">{b.kind === 'bullet' ? '•' : ''}</span>
           <BlockEditor
             path={path}
             block={b}

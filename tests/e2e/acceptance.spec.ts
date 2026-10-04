@@ -149,10 +149,10 @@ async function beginEditFirstBullet(page: import('@playwright/test').Page): Prom
   await page.keyboard.press('Enter');
 }
 
-// KNOWN src BUG (not fixed here, M6 does not own src/**): editor.css `.block-bullet { flex: none; width: 1em }`
+// REGRESSION GUARD (bug found by M6, fixed in main): editor.css once styled `.block-bullet { flex: none; width: 1em }`
 // is meant for the bullet <span>, but Outline gives bullet-kind <li> the same class name (`block block-bullet`),
 // so those rows collapse to ~15px wide and the text wraps one character per line (block-view is 0px wide).
-test.fixme('9. 布局：bullet 块的文本列有可点击的宽度', async ({ page }) => {
+test('9. 布局：bullet 块的文本列有可点击的宽度', async ({ page }) => {
   await page.goto('/');
   await importGraph(page);
   await openPage(page, 'Basic Page');
