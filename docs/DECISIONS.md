@@ -29,3 +29,11 @@
 4. 反链「前后各一行」→ 面包屑 + 子块（Q10）。
 5. React 18 → 当前默认版本（Q12）。
 6. 未定义的空白：非 outliner 内容（Q2）、页面身份规则（Q8、Q13）、重导入冲突（Q6）、导出粒度（Q7）、渲染模式（Q9）、属性行编辑（Q15）。
+
+## 执行记录（2026-10-04）
+
+- M0 主会话；M1/M2 并行、M3、M4/M5 并行、M6 由 `worker` 子 Agent 在 `.worktrees/*` 完成，每个里程碑由主会话独立复跑验证门后合入。
+- Codex 第一轮对抗审查（`docs/review-parser-codex-r1.md`）：18 项，6 项改代码（含深层嵌套栈溢出），12 项改规格（PLAN §3 标 `[修订]`）。
+- M6 e2e 发现 `.block-bullet` 类名同时用于 `<li>` 与圆点 `<span>`，导致 bullet 行塌缩成 1em；主会话改名为 `.block-dot`，e2e 用例 9 作为回归守卫。
+- 环境事实：macOS 27 下从终端/agent 启动 Firefox 会因 TCC 保护 `~/Library/Application Support/Firefox` 报 `Could not find profile folder`；`playwright.config.ts` 设 `CFFIXED_USER_HOME` 到 `test-results/cf-home` 规避。Firefox 在该假 home 下创建的 `Documents/`、`Downloads/` 目录可能无法从 agent 进程删除，需用户手动清理（已被 .gitignore 忽略）。
+- 个人 Logseq graph 不复制进仓库，测试通过 `MDGRAPH_REAL_GRAPH` 原地只读；真实语料 60 文件幂等 0 失败。

@@ -65,9 +65,15 @@ export interface WorkspaceState {
   exportFile(path: string): Promise<void>;
 }
 
-/** Text shown in the editor textarea for a block (content + property lines except id). */
+/**
+ * Text shown in the editor textarea for a block. Mirrors what
+ * parser/ops.setBlockText expects back:
+ *  - bullet: head line, property lines except id, remaining content lines
+ *  - raw:    the block's content verbatim (it already contains its property lines)
+ */
 export function editableTextOf(block: Block): string {
-  const lines = block.content.split('\n');
+  if (block.kind === 'raw') return block.content;
   const props = block.properties.filter((p) => p.key !== 'id').map((p) => `${p.key}:: ${p.value}`);
+  const lines = block.content.split('\n');
   return [lines[0] ?? '', ...props, ...lines.slice(1)].join('\n');
 }
