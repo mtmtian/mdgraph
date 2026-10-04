@@ -7,7 +7,7 @@
   "blocks": [
     {
       "kind": "raw", "depth": 0,
-      "content": "",
+      "content": "title:: Basic Page\ntags:: [[demo]], project\n",
       "properties": [["title", "Basic Page"], ["tags", "[[demo]], project"]],
       "task": null, "links": ["demo", "project"], "tags": ["demo", "project"], "refs": [],
       "children": []

@@ -58,7 +58,7 @@ scripts/check-forbidden-api.mjs
 
 ### 3.3 块内容
 - bullet：`content` 第 1 行 = 头行去掉 `marker + ' '`。紧跟头行的、匹配 `^\s*([^\s:]+):: ?(.*)$` 的延续行是属性行（连续，遇到第一条非属性延续行停止）；其余延续行去掉「块缩进 + continuationIndent」前缀（不足则去掉实际前导空白）后作为 content 后续行。**头行本身是属性行**（如 `- date:: [[x]]`）时：properties 含该项，content 为空字符串。
-- raw：开头连续的属性行进入 `properties`（这是 Logseq 的页面属性写法），其余行原样 join('\n') 为 content（结尾空行保留为末尾 `\n`）。
+- raw：`content` = 该 raw run 的**全部原始行**逐行 join('\n')，**包含属性行**；开头连续的属性行同时派生进 `properties`（这是 Logseq 的页面属性写法），对 raw 块它只是只读元数据。**[修订 Q-R1]** 这样「零个正文行」与「一个空行」不再歧义，编辑态直接显示 content。
 - `task`：**仅 bullet 块** content 首行以 `TODO ` / `DOING ` / `DONE ` 开头（或整行恰为该词）；raw 块恒为 null **[修订 M05]**。
 - `id`：`id::` 属性值为 uuid 形态时 `persistentId=true`；否则 `id = 'tmp-' + 递增计数或随机`，`persistentId=false`。
 - `rawLines`：该块（不含子块）的全部原始行，不含 EOL。
@@ -75,8 +75,10 @@ scripts/check-forbidden-api.mjs
 ### 3.5 序列化（`serialize.ts`）—— 最高优先级
 - `rawLines !== null` 的块：逐行原样输出，再输出子块。
 - `rawLines === null` 的 bullet 块：`indent = indentUnit.repeat(depth)`；头行 `indent + marker + ' ' + contentLines[0]`（content 为空且无属性时输出 `indent + marker + ' '`… 若原文件习惯是 `-` 不带尾空格无法得知，统一带空格）；然后属性行 `indent + continuationIndent + key + ':: ' + value`（顺序按 `properties`）；然后 content 其余行加同样前缀（空行输出为空字符串，不带前缀）。
-- `rawLines === null` 的 raw 块：属性行 `key:: value` 然后 content 按行原样。
+- `rawLines === null` 的 raw 块：只输出 `content.split('\n')`（属性行已在 content 内）。**[修订 Q-R1]**
 - 拼接：行 join(eol)，`trailingNewline` 为真时末尾加 eol，`bom` 为真时前置 `﻿`。
+- 缩进与延续前缀的「空白」只指空格和 Tab（与 M03/M04 一致），所有行分类正则共用同一定义。**[修订 Q-R1]**
+- 已知非目标：`ops → serialize → parse` 不保证结构幂等（例如在 bullet 的 content 中输入形如 `- b` 的续行，再解析会成为子块）；§3.5 只约束 `parse → serialize`。
 - **不变量**：`serialize(parse(text)) === text` 对任意输入成立（含空文件、只有空行的文件、无尾换行、CRLF、BOM、Tab、围栏、非 outliner 内容、上万层嵌套）。parse/serialize/walk/ops 的树遍历必须是迭代实现，不得因深度抛栈溢出（H01）。
 
 ### 3.6 编辑操作（`ops.ts`，纯函数，返回新 Document，被改块 `rawLines=null`）
@@ -85,9 +87,12 @@ scripts/check-forbidden-api.mjs
 - `indent(doc, id)`：成为前一个兄弟的最后一个子块；无前兄弟则 no-op。其子树深度 +1。
 - `outdent(doc, id)`：depth 0 no-op；否则移到父块之后作为父块的兄弟，原来位于其后的兄弟成为它的子块（Logseq 行为）。
 - `mergeWithPrevious(doc, id)`：**仅当本块与目标块都是 bullet** **[修订 M09]**，把 content 追加到前一个可见块（前兄弟的最深末端后代，或父块）的 content 末尾，删除本块；本块的子块接到被合并块下；任一侧为 raw 返回 null。返回光标位置 = 被合并块原 content 长度。
-- `ensureId(doc, id, uuid)`：无 `id::` 时在 properties 末尾加入并置 `rawLines=null`；已有**合法 uuid** 则返回原值；`id::` 存在但非 uuid 时用新 uuid 覆盖其值（Logseq 只接受 uuid）**[修订 M07]**。
+- `ensureId(doc, id, uuid)`：bullet 块无 `id::` 时在 properties 末尾加入并置 `rawLines=null`；raw 块则在开头连续属性行之后插入一行 `id:: <uuid>` 到 content；已有**合法 uuid** 则返回原值；`id::` 存在但非 uuid 时用新 uuid 覆盖其值（Logseq 只接受 uuid）**[修订 M07]**。
 - **子树重缩进规则**：indent/outdent 改变子孙深度时，子孙若 `rawLines !== null`，对每行做前缀位移（加一个 indentUnit，或去掉一个 indentUnit；去不掉时去掉实际前导空白中能去的部分并把该块 `rawLines=null`），不重新生成。空行保持为空字符串，不加不减前缀，也不因此置 `rawLines=null` **[修订 M08]**。
 - 所有 ops 之后 `serialize` 的输出中，**未被触及的块字节不变**（测试用 diff 行数断言）。
+
+### 3.7 行内语法只有一份实现
+`syntax.ts` 的单遍 `tokenize(text)` 是 `[[ ]]`、`#tag`、`#[[ ]]`、`(( ))`、行内代码、围栏、URL、Markdown 链接、属性行、任务关键字的唯一识别器；`extractInline`/`deriveFields` 与 `editor/inline.tsx` 的 `renderInline` 都只消费它的 token。渲染出的可点击项集合必须等于抽取出的 links ∪ tags ∪ refs（有一致性测试）。**[修订 Q-R1]**
 
 ## 4. 页面身份（`index/pageName.ts`）
 - 名字来自文件名去 `.md`：`%2F` → `/`，`___` → `/`；`journals/yyyy_MM_dd.md` → `MMM do, yyyy`（英文月份缩写 + 序数 + 年，Logseq 默认格式，硬编码，不读 config.edn）。

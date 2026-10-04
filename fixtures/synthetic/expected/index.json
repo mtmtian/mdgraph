@@ -48,7 +48,7 @@
       ["pages/other___deep.md", "links to [[ns/child]] and [[other/deep]] and [[Renamed Deep]]"]
     ],
     "demo": [
-      ["pages/basic.md", ""]
+      ["pages/basic.md", "title:: Basic Page"]
     ]
   },
   "blockBacklinks": {
@@ -58,8 +58,8 @@
     ]
   },
   "_notes": [
-    "The block 'date:: [[Jun 25th, 2022]]' in ns%2Fchild.md is a bullet whose head line is itself a property line; it has properties [date] and empty content, and its property value produces a backlink with via='property'. Label convention used in this file: when a bullet block has empty content, its label is the first non-id property line (key:: value); raw blocks keep the empty string.",
-    "The raw first block of basic.md has empty content, so its backlink entry for 'demo' shows an empty first content line.",
+    "The block 'date:: [[Jun 25th, 2022]]' in ns%2Fchild.md is a bullet whose head line is itself a property line; it has properties [date] and empty content, and its property value produces a backlink with via='property'. Label convention used in this file: when a bullet block has empty content, its label is the first non-id property line (key:: value); raw blocks use their first content line.",
+    "Raw blocks keep their property lines inside content (PLAN §3.3 Q-R1), so the backlink entry for 'demo' from the raw first block of basic.md shows its first line 'title:: Basic Page'.",
     "Self references (other___deep.md linking [[Renamed Deep]] / [[other/deep]]) ARE stored in the index; the Backlinks view hides entries whose source path equals the current page's path."
   ]
 }
