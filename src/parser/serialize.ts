@@ -14,11 +14,17 @@ function renderBlock(doc: Document, block: Block, out: string[]): void {
     for (const p of block.properties) out.push(cont + p.key + ':: ' + p.value);
     for (let i = 1; i < lines.length; i++) out.push(lines[i] === '' ? '' : cont + lines[i]);
   }
-  for (const child of block.children) renderBlock(doc, child, out);
 }
 
 export function serialize(doc: Document): string {
   const lines: string[] = [];
-  for (const block of doc.blocks) renderBlock(doc, block, lines);
-  return (doc.bom ? '﻿' : '') + lines.join(doc.eol) + (doc.trailingNewline ? doc.eol : '');
+  // Explicit stack: nesting depth is unbounded, the call stack is not.
+  const stack: Block[] = [];
+  for (let i = doc.blocks.length - 1; i >= 0; i--) stack.push(doc.blocks[i]);
+  while (stack.length > 0) {
+    const block = stack.pop()!;
+    renderBlock(doc, block, lines);
+    for (let i = block.children.length - 1; i >= 0; i--) stack.push(block.children[i]);
+  }
+  return (doc.bom ? '\ufeff' : '') + lines.join(doc.eol) + (doc.trailingNewline ? doc.eol : '');
 }
